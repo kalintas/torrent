@@ -1,9 +1,14 @@
+#ifndef TORRENT_BENCODE_PARSER_HPP
+#define TORRENT_BENCODE_PARSER_HPP
+
 #include <fstream>
 #include <variant>
 #include <vector>
-#include <unordered_map>
+#include <map>
 #include <sstream>
 #include <iostream>
+#include <iomanip>
+
 namespace torrent {
 
 // A simple class to parse bencode files.
@@ -14,7 +19,7 @@ private:
 public:
     struct Element; 
     using List = std::vector<Element>;
-    using Dictionary = std::unordered_map<std::string, Element>;
+    using Dictionary = std::map<std::string, Element>;
         
     struct Element {
         using Type = std::variant<int, std::string, List, Dictionary>;
@@ -35,6 +40,79 @@ public:
             element_to_json(*this, stream);
             return stream.str();
         }
+    private:
+        static void convert_to_valid_json(const std::string& str, std::stringstream& stream) {
+            bool not_valid = true;
+            bool is_hex = false;
+
+            for (const char c: str) {
+                if (!std::isspace(c) && !std::isprint(c)) {
+                    is_hex = true;
+                    break;
+                }
+                if (c == '\\' || c == '"') {
+                    not_valid = true;
+                } 
+            }
+            if (is_hex) {
+                for (const char c: str) {
+                    stream << std::uppercase << std::setfill('0') << std::setw(2) << 
+                        std::hex << static_cast<int>(static_cast<unsigned char>(c)) << ' ';
+                } 
+            } else if (not_valid) {
+                for (const char c: str) {
+                    if (c == '\\' || c == '"') {
+                        stream << '\\';
+                    } 
+                    stream << c; 
+                }
+            } else {
+                stream << str;
+            }
+        }
+
+        // Helpers for type matching in element_to_json function 
+        template<class... Ts>
+        struct overloaded : Ts... { using Ts::operator()...; };
+        template<class... Ts>
+        overloaded(Ts...) -> overloaded<Ts...>;
+
+        static void element_to_json(const Element& element, std::stringstream& stream) {
+            std::visit(overloaded{
+                [&] (const int value) { stream << value; },
+                [&] (const std::string& value){ 
+                    stream << '"'; 
+                    convert_to_valid_json(value, stream);
+                    stream << '"';
+                },
+                [&] (const List& list) {
+                    stream << '[';
+                    for (int i = 0; i < list.size(); ++i) {
+                        element_to_json(list[i], stream); 
+                        if (i != list.size() - 1) {
+                            stream << ", ";
+                        }
+                    } 
+                    stream << ']';
+                },
+                [&] (const Dictionary& dictionary) {
+                    stream << '{';   
+
+                    for (auto it = dictionary.begin();;) {
+                        stream << '"' << it->first << "\":";
+                        element_to_json(it->second, stream);
+                        ++it;
+                        if (it != dictionary.end()) {
+                            stream << ", ";
+                        } else {
+                            break;
+                        }
+                    }
+                    
+                    stream << '}';
+                }},
+                element.value); 
+        }
     };
 private:
     Element element;
@@ -45,7 +123,7 @@ public:
     
     void parse() {
         if (file.peek() != EOF) {
-            element = parseNext(file.peek());
+            element = parse_next(file.peek());
         }
     } 
     
@@ -54,62 +132,24 @@ public:
     }
 
 private:
-    // Helpers for type matching in element_to_json function 
-    template<class... Ts>
-    struct overloaded : Ts... { using Ts::operator()...; };
-    template<class... Ts>
-    overloaded(Ts...) -> overloaded<Ts...>;
-
-    static void element_to_json(const Element& element, std::stringstream& stream) {
-        std::visit(overloaded{
-            [&] (const int value) { stream << value; },
-            [&] (const std::string& value){ stream << '"' << value << '"'; },
-            [&] (const List& list) {
-                stream << '[';
-                for (int i = 0; i < list.size(); ++i) {
-                    element_to_json(list[i], stream); 
-                    if (i != list.size() - 1) {
-                        stream << ", ";
-                    }
-                } 
-                stream << ']';
-            },
-            [&] (const Dictionary& dictionary) {
-                stream << '{';   
-
-                for (auto it = dictionary.begin();;) {
-                    stream << '"' << it->first << "\":";
-                    element_to_json(it->second, stream);
-                    ++it;
-                    if (it != dictionary.end()) {
-                        stream << ", ";
-                    } else {
-                        break;
-                    }
-                }
-                
-                stream << '}';
-            }},
-            element.value); 
-    }
-
-    Element parseNext(char next_char) {
+    
+    Element parse_next(char next_char) {
         if (std::isdigit(next_char)) {
-            return parseString();
+            return parse_string();
         }
         switch (next_char) {
             case 'i':
-                return parseInt();
+                return parse_int();
             case 'l':
-                return parseList();
+                return parse_list();
             case 'd':
-                return parseDictionary();
+                return parse_dictionary();
             default:
                 throw std::runtime_error{ "Could not parse, invalid input." + std::to_string((int)next_char) };
         }
     }
     
-    Element parseInt() {
+    Element parse_int() {
         file.get();
         int value;
         file >> value;
@@ -119,7 +159,7 @@ private:
         return Element{ value };
     }
 
-    Element parseString() {
+    Element parse_string() {
         int length;
         file >> length;
         if (file.get() != ':') {
@@ -131,7 +171,7 @@ private:
         return Element{ value };  
     }
 
-    Element parseList() {
+    Element parse_list() {
         file.get(); 
         List list; 
         char next_char; 
@@ -139,13 +179,13 @@ private:
             if (next_char == EOF) {
                 throw std::runtime_error{ "EOF while parsing." };
             }
-            list.push_back(parseNext(next_char));
+            list.push_back(parse_next(next_char));
         }
         file.get(); // consume 'e'
 
         return Element{ list };  
     }
-    Element parseDictionary() {
+    Element parse_dictionary() {
         file.get(); 
         Dictionary dictionary; 
         char next_char; 
@@ -153,8 +193,8 @@ private:
             if (next_char == EOF) {
                 throw std::runtime_error{ "EOF while parsing." };
             }
-            Element key = parseString();
-            Element value = parseNext(file.peek());
+            Element key = parse_string();
+            Element value = parse_next(file.peek());
             
             dictionary.emplace(std::get<std::string>(key.value), value);
         }
@@ -165,4 +205,4 @@ private:
 };
 
 }
-
+#endif
