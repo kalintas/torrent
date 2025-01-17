@@ -35,6 +35,11 @@ public:
             return *this; 
         }
 
+        template<typename T>
+        constexpr const T& get() const {
+            return std::get<T>(value);
+        }
+
         std::string to_json() const {
             std::stringstream stream; 
             element_to_json(*this, stream);
