@@ -1,7 +1,10 @@
 #ifndef TORRENT_BENCODE_PARSER_HPP
 #define TORRENT_BENCODE_PARSER_HPP
 
+#include <cctype>
 #include <fstream>
+#include <istream>
+#include <memory>
 #include <variant>
 #include <vector>
 #include <map>
@@ -11,11 +14,12 @@
 
 namespace torrent {
 
-// A simple class to parse bencode files.
+// A simple class to parse bencode streams.
 // https://en.wikipedia.org/wiki/Bencode
 class BencodeParser {
 private:
-    std::fstream file;
+    
+    std::unique_ptr<std::basic_istream<char>> stream;
 public:
     struct Element; 
     using List = std::vector<Element>;
@@ -38,6 +42,17 @@ public:
         template<typename T>
         constexpr const T& get() const {
             return std::get<T>(value);
+        }
+
+        template<typename T>
+        constexpr T& get() {
+            return std::get<T>(value);
+        }
+
+        std::string to_bencode() const {
+            std::stringstream stream;
+            element_to_bencode(*this, stream);
+            return stream.str();
         }
 
         std::string to_json() const {
@@ -76,7 +91,7 @@ public:
             }
         }
 
-        // Helpers for type matching in element_to_json function 
+        // Helpers for type matching.
         template<class... Ts>
         struct overloaded : Ts... { using Ts::operator()...; };
         template<class... Ts>
@@ -118,23 +133,59 @@ public:
                 }},
                 element.value); 
         }
+
+        static void element_to_bencode(const Element& element, std::stringstream& stream) {
+            std::visit(overloaded{
+                [&] (const int value) { stream << 'i' << value << 'e'; },
+                [&] (const std::string& value){ 
+                    stream << value.size() << ':' << value; 
+                },
+                [&] (const List& list) {
+                    stream << 'l';
+                    for (int i = 0; i < list.size(); ++i) {
+                        element_to_bencode(list[i], stream); 
+                    } 
+                    stream << 'e';
+                },
+                [&] (const Dictionary& dictionary) {
+                    stream << 'd';   
+                    for (const auto& pair: dictionary) {
+                        stream << pair.first.size() << ':' << pair.first; // key
+                        element_to_bencode(pair.second, stream); // value
+                    }
+                    stream << 'e';
+                }},
+                element.value); 
+        }
     };
 private:
     Element element;
 public:    
-    BencodeParser(const char* path) :
-        file(path, std::fstream::in | std::fstream::ios_base::binary) {
+
+    BencodeParser(std::unique_ptr<std::basic_istream<char>>&& stream): stream(std::move(stream)) {}
+    BencodeParser(const char* path) {
+        stream = std::make_unique<std::ifstream>(path, std::fstream::ios_base::binary);
     }
     
     void parse() {
-        if (file.peek() != EOF) {
-            element = parse_next(file.peek());
+        auto next_char = stream->peek();
+        if (next_char != EOF) {
+            // Skip any leading whitespace
+            while (std::isspace(next_char)) {
+                next_char = stream->get(); 
+            }
+            element = parse_next(next_char);
         }
     } 
     
     const Element& get() const {
         return element;
     }
+
+    Element& get() {
+        return element;
+    }
+    
 
 private:
     
@@ -155,10 +206,10 @@ private:
     }
     
     Element parse_int() {
-        file.get();
+        stream->get();
         int value;
-        file >> value;
-        if (file.get() != 'e') {
+        *stream >> value;
+        if (stream->get() != 'e') {
             throw std::runtime_error{ "Parsing error while parsing an integer." };
         }
         return Element{ value };
@@ -166,44 +217,44 @@ private:
 
     Element parse_string() {
         int length;
-        file >> length;
-        if (file.get() != ':') {
+        *stream >> length;
+        if (stream->get() != ':') {
             throw std::runtime_error{ "Parsing error while parsing a byte string." };
         }
         std::string value; 
         value.resize(length);
-        file.read(value.data(), length);
+        stream->read(value.data(), length);
         return Element{ value };  
     }
 
     Element parse_list() {
-        file.get(); 
+        stream->get(); 
         List list; 
         char next_char; 
-        while ((next_char = file.peek()) != 'e') {
+        while ((next_char = stream->peek()) != 'e') {
             if (next_char == EOF) {
                 throw std::runtime_error{ "EOF while parsing." };
             }
             list.push_back(parse_next(next_char));
         }
-        file.get(); // consume 'e'
+        stream->get(); // consume 'e'
 
         return Element{ list };  
     }
     Element parse_dictionary() {
-        file.get(); 
+        stream->get(); 
         Dictionary dictionary; 
         char next_char; 
-        while ((next_char = file.peek()) != 'e') {
+        while ((next_char = stream->peek()) != 'e') {
             if (next_char == EOF) {
                 throw std::runtime_error{ "EOF while parsing." };
             }
             Element key = parse_string();
-            Element value = parse_next(file.peek());
+            Element value = parse_next(stream->peek());
             
             dictionary.emplace(std::get<std::string>(key.value), value);
         }
-        file.get(); // consume 'e'
+        stream->get(); // consume 'e'
 
         return Element{ dictionary };  
     }
