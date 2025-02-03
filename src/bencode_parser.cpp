@@ -6,7 +6,8 @@ namespace torrent {
 
 void BencodeParser::Element::convert_to_valid_json(
     const std::string& str,
-    std::stringstream& stream) {
+    std::stringstream& stream
+) {
     bool not_valid = true;
     bool is_hex = false;
 
@@ -47,7 +48,8 @@ overloaded(Ts...) -> overloaded<Ts...>;
 
 void BencodeParser::Element::element_to_json(
     const Element& element,
-    std::stringstream& stream) {
+    std::stringstream& stream
+) {
     std::visit(
         overloaded {
             [&](const int value) { stream << value; },
@@ -81,12 +83,16 @@ void BencodeParser::Element::element_to_json(
                 }
 
                 stream << '}';
-            }},
-        element.value);
+            }
+        },
+        element.value
+    );
 }
+
 void BencodeParser::Element::element_to_bencode(
     const Element& element,
-    std::stringstream& stream) {
+    std::stringstream& stream
+) {
     std::visit(
         overloaded {
             [&](const int value) { stream << 'i' << value << 'e'; },
@@ -103,12 +109,14 @@ void BencodeParser::Element::element_to_bencode(
             [&](const Dictionary& dictionary) {
                 stream << 'd';
                 for (const auto& pair : dictionary) {
-                    stream << pair.first.size() << ':' << pair.first;  // key
-                    element_to_bencode(pair.second, stream);  // value
+                    stream << pair.first.size() << ':' << pair.first; // key
+                    element_to_bencode(pair.second, stream); // value
                 }
                 stream << 'e';
-            }},
-        element.value);
+            }
+        },
+        element.value
+    );
 }
 
 void BencodeParser::parse() {
@@ -136,7 +144,8 @@ BencodeParser::Element BencodeParser::parse_next(char next_char) {
         default:
             throw std::runtime_error {
                 "Could not parse, invalid input."
-                + std::to_string((int)next_char)};
+                + std::to_string((int)next_char)
+            };
     }
 }
 
@@ -172,10 +181,11 @@ BencodeParser::Element BencodeParser::parse_list() {
         }
         list.push_back(parse_next(next_char));
     }
-    stream->get();  // consume 'e'
+    stream->get(); // consume 'e'
 
     return Element {list};
 }
+
 BencodeParser::Element BencodeParser::parse_dictionary() {
     stream->get();
     Dictionary dictionary;
@@ -189,9 +199,9 @@ BencodeParser::Element BencodeParser::parse_dictionary() {
 
         dictionary.emplace(std::get<std::string>(key.value), value);
     }
-    stream->get();  // consume 'e'
+    stream->get(); // consume 'e'
 
     return Element {dictionary};
 }
 
-}  // namespace torrent
+} // namespace torrent

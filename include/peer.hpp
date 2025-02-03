@@ -5,8 +5,8 @@
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <cstdint>
-#include <ostream>
 #include <iostream>
+#include <ostream>
 
 namespace torrent {
 
@@ -22,11 +22,13 @@ class Peer: public std::enable_shared_from_this<Peer> {
     Peer(
         PeerManager& peer_manager,
         asio::io_context& io_context,
-        tcp::endpoint endpoint) :
+        tcp::endpoint endpoint
+    ) :
         peer_manager(peer_manager),
         io_context(io_context),
         endpoint(std::move(endpoint)),
         socket(io_context) {}
+
     Peer(Peer&& peer) :
         peer_manager(peer.peer_manager),
         io_context(peer.io_context),
@@ -38,22 +40,22 @@ class Peer: public std::enable_shared_from_this<Peer> {
 
     void connect();
 
-    friend std::ostream& operator<< (std::ostream& os, const Peer& peer) {
-    
-    os << "(";
-    if (!peer.remote_peer_id.empty()) {
-        os << peer.remote_peer_id;
-    } else {
-        os << peer.endpoint;
+    friend std::ostream& operator<<(std::ostream& os, const Peer& peer) {
+        os << "(";
+        if (!peer.remote_peer_id.empty()) {
+            os << peer.remote_peer_id;
+        } else {
+            os << peer.endpoint;
+        }
+        os << ")";
+        return os;
     }
-    os << ")" ;
-    return os;
-}
 
   private:
     void change_status(Status new_status);
     void listen_peer();
     void start_handshake();
+
   private:
     asio::io_context& io_context;
     tcp::socket socket;
@@ -69,9 +71,5 @@ class Peer: public std::enable_shared_from_this<Peer> {
     PeerManager& peer_manager;
 };
 
-
-
-
-
-}  // namespace torrent
+} // namespace torrent
 #endif

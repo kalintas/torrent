@@ -39,5 +39,5 @@ class Client {
 
   private:
 };
-}  // namespace torrent
+} // namespace torrent
 #endif

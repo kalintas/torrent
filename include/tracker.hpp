@@ -49,7 +49,8 @@ class Tracker {
                 if (error) {
                     throw std::runtime_error(
                         "Could not resolve the given url: " + error.message()
-                        + '\n');
+                        + '\n'
+                    );
                 }
                 asio::async_connect(
                     socket,
@@ -58,13 +59,16 @@ class Tracker {
                         if (error) {
                             throw std::runtime_error(
                                 "Could not connect to the tracker: "
-                                + error.message() + '\n');
+                                + error.message() + '\n'
+                            );
                         }
 
-                        fetch_peers();  // Request peer list from the tracker.
-                        listen_packet(add_peer_func);  // Listen response.
-                    });
-            });
+                        fetch_peers(); // Request peer list from the tracker.
+                        listen_packet(add_peer_func); // Listen response.
+                    }
+                );
+            }
+        );
     }
 
   private:
@@ -83,9 +87,11 @@ class Tracker {
             [](std::error_code error, std::size_t bytes_sent) {
                 if (error) {
                     throw std::runtime_error(
-                        "Could not fetch peers: " + error.message() + '\n');
+                        "Could not fetch peers: " + error.message() + '\n'
+                    );
                 }
-            });
+            }
+        );
     }
 
     /*
@@ -102,7 +108,8 @@ class Tracker {
                 if (error) {
                     throw std::runtime_error(
                         "Error while listening a packet from tracker: "
-                        + error.message() + '\n');
+                        + error.message() + '\n'
+                    );
                 }
 
                 BOOST_LOG_TRIVIAL(info)
@@ -111,7 +118,8 @@ class Tracker {
                     << url.host();
 
                 BencodeParser input_parser(
-                    std::make_unique<std::stringstream>(response.body()));
+                    std::make_unique<std::stringstream>(response.body())
+                );
                 input_parser.parse();
                 auto element = input_parser.get();
                 auto dict = element.get<BencodeParser::Dictionary>();
@@ -127,14 +135,16 @@ class Tracker {
                     std::copy(
                         peer_string.begin() + i,
                         peer_string.begin() + i + 4,
-                        ip.begin());
+                        ip.begin()
+                    );
                     std::uint16_t port =
                         ((std::uint16_t)peer_string[i + 5] << 8)
                         | (std::uint16_t)peer_string[i + 4];
                     // Port is always big endian. So convert it to the native
                     auto endpoint = tcp::endpoint {
                         address_v4(ip),
-                        boost::endian::big_to_native(port)};
+                        boost::endian::big_to_native(port)
+                    };
 
                     add_peer_func(std::move(endpoint));
                 }
@@ -145,13 +155,15 @@ class Tracker {
                 timer.async_wait([&](auto error) {
                     if (error) {
                         throw new std::runtime_error(
-                            "Error in async_wait: " + error.message() + '\n');
+                            "Error in async_wait: " + error.message() + '\n'
+                        );
                     }
                     // Fetch the peer list again.
-                    fetch_peers();  // Request peer list from the tracker.
-                    listen_packet(add_peer_func);  // Listen response.
+                    fetch_peers(); // Request peer list from the tracker.
+                    listen_packet(add_peer_func); // Listen response.
                 });
-            });
+            }
+        );
     }
 
   private:
@@ -168,5 +180,5 @@ class Tracker {
     http::request<http::string_body> request;
     http::response<http::string_body> response;
 };
-}  // namespace torrent
+} // namespace torrent
 #endif

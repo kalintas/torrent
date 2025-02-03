@@ -14,9 +14,10 @@ std::string get_sha1(const std::string& input) {
     std::memcpy(
         static_cast<void*>(result.data()),
         static_cast<void*>(hash),
-        20);
+        20
+    );
 
     return result;
 }
 
-}  // namespace torrent
+} // namespace torrent

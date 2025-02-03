@@ -1,4 +1,5 @@
 #include "client.hpp"
+
 #include <boost/log/trivial.hpp>
 
 #include "tracker.hpp"
@@ -23,7 +24,7 @@ Client::Client(const char* path) :
     while (peer_id.size() < 20) {
         peer_id.push_back(alphanum[dist(random_engine)]);
     }
-    
+
     BOOST_LOG_TRIVIAL(info) << "Peer id: " << peer_id;
 }
 
@@ -35,12 +36,13 @@ void Client::start() {
             std::get<BencodeParser::Dictionary>(bencode_parser.get().value);
 
         auto announce = dictionary["announce"].get<std::string>();
-        
-        BOOST_LOG_TRIVIAL(info) << "Parsed the torrent file. Announce: " << announce;
+
+        BOOST_LOG_TRIVIAL(info)
+            << "Parsed the torrent file. Announce: " << announce;
         auto info_element = dictionary["info"];
         auto info = info_element.get<BencodeParser::Dictionary>();
         auto info_hash = get_sha1(info_element.to_bencode());
-        
+
         // Calculate the peer handshake.
         peer_manager.calculate_handshake(info_hash, peer_id);
 
@@ -61,7 +63,8 @@ void Client::start() {
             std::move(url),
             [this](tcp::endpoint endpoint) {
                 peer_manager.add(std::move(endpoint));
-            });
+            }
+        );
 
         io_context.run();
     } catch (std::runtime_error e) {
@@ -69,4 +72,4 @@ void Client::start() {
     }
 }
 
-}  // namespace torrent
+} // namespace torrent

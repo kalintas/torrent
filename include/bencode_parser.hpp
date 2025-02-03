@@ -29,8 +29,11 @@ class BencodeParser {
         Type value;
 
         Element(Element&& element) : value(std::move(element.value)) {}
+
         Element(const Element& element) : value(element.value) {}
+
         Element() {}
+
         Element(Type value) : value(std::move(value)) {}
 
         Element& operator=(Element element) {
@@ -63,7 +66,8 @@ class BencodeParser {
       private:
         static void convert_to_valid_json(
             const std::string& str,
-            std::stringstream& stream);
+            std::stringstream& stream
+        );
 
         static void
         element_to_json(const Element& element, std::stringstream& stream);
@@ -77,10 +81,12 @@ class BencodeParser {
   public:
     BencodeParser(std::unique_ptr<std::basic_istream<char>>&& stream) :
         stream(std::move(stream)) {}
+
     BencodeParser(const char* path) {
         stream = std::make_unique<std::ifstream>(
             path,
-            std::fstream::ios_base::binary);
+            std::fstream::ios_base::binary
+        );
     }
 
     const Element& get() const {
@@ -101,5 +107,5 @@ class BencodeParser {
     Element parse_dictionary();
 };
 
-}  // namespace torrent
+} // namespace torrent
 #endif
