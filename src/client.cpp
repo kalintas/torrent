@@ -1,17 +1,19 @@
 #include "client.hpp"
 
 #include <boost/log/trivial.hpp>
+#include <cstdint>
 
 #include "tracker.hpp"
 #include "utility.hpp"
 
 namespace torrent {
 
-Client::Client(const char* path) :
-    peer_manager(io_context),
+Client::Client(const std::string_view path, std::uint16_t port) :
+    peer_manager(io_context, port),
     bencode_parser(path),
     tracker(io_context),
-    random_engine(std::random_device {}()) {
+    random_engine(std::random_device {}()),
+    port(port) {
     // Generate 20 random characters for the peer id.
     static constexpr std::string_view alphanum =
         "0123456789"
@@ -51,7 +53,7 @@ void Client::start() {
 
         params.append({"info_hash", info_hash});
         params.append({"peer_id", peer_id});
-        params.append({"port", "0"});
+        params.append({"port", std::to_string(port)});
         params.append({"uploaded", "0"});
         params.append({"downloaded", "0"});
         params.append({"compact", "1"});

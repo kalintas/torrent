@@ -120,6 +120,10 @@ void BencodeParser::Element::element_to_bencode(
 }
 
 void BencodeParser::parse() {
+    if (!stream) {
+        throw std::runtime_error("There is no open streams for to parse.");
+    }
+
     auto next_char = stream->peek();
     if (next_char != EOF) {
         // Skip any leading whitespace
@@ -127,6 +131,7 @@ void BencodeParser::parse() {
             next_char = stream->get();
         }
         element = parse_next(next_char);
+        stream = nullptr; // Close the stream.
     }
 }
 

@@ -2,6 +2,8 @@
 
 #include <boost/log/trivial.hpp>
 #include <cstring>
+#include <memory>
+#include <sstream>
 #include <stdexcept>
 
 namespace torrent {
@@ -37,11 +39,47 @@ void PeerManager::add(tcp::endpoint endpoint) {
 
 void PeerManager::remove(const tcp::endpoint& endpoint) {
     const auto peer_it = peers.find(endpoint);
+    if (peer_it == peers.end()) {
+        return;
+    }
+    if (peer_it->second->get_status() == Peer::Status::Handshook) {
+        active_peers -= 1;
+    }
 
-    BOOST_LOG_TRIVIAL(info)
-        << "Peer count: " << peers.size()
-        << ", Connection lost with peer: " << *peer_it->second;
+    BOOST_LOG_TRIVIAL(info) << "Active peers: " << active_peers
+                            << ", Connection lost with " << *peer_it->second;
 
     peers.erase(peer_it);
 }
+
+void PeerManager::on_handshake(Peer& peer) {
+    auto temp = std::move(peer.remote_peer_id);
+    std::ostringstream oss;
+    oss << peer;
+    peer.remote_peer_id = std::move(temp);
+
+    active_peers += 1;
+
+    BOOST_LOG_TRIVIAL(info)
+        << "Active peers: " << active_peers
+        << ", Handshake complete: " << oss.str() << " -> " << peer;
+}
+
+void PeerManager::accept_new_peers() {
+    acceptor.async_accept(new_peer_socket, [this](auto error_code) {
+        if (!error_code) {
+            auto peer = std::make_shared<Peer>(
+                *this,
+                io_context,
+                std::move(new_peer_socket)
+            );
+
+            peers.insert({peer->get_endpoint(), std::move(peer)});
+
+            new_peer_socket = tcp::socket {io_context};
+        }
+        accept_new_peers();
+    });
+}
+
 } // namespace torrent

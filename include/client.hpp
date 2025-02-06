@@ -3,6 +3,7 @@
 
 #include <boost/asio.hpp>
 #include <boost/asio/io_context.hpp>
+#include <cstdint>
 #include <random>
 
 #include "bencode_parser.hpp"
@@ -28,8 +29,10 @@ class Client {
     Tracker tracker;
     PeerManager peer_manager;
 
+    static constexpr std::uint16_t DEFAULT_PORT = 8000;
+
   public:
-    Client(const char* path);
+    Client(const std::string_view path, std::uint16_t port = DEFAULT_PORT);
     // Object must be pinned to its memory address because
     //      Peers contain a reference to it.
     Client(const Client&) = delete;
@@ -38,6 +41,7 @@ class Client {
     void start();
 
   private:
+    std::uint16_t port;
 };
 } // namespace torrent
 #endif

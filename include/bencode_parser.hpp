@@ -82,9 +82,9 @@ class BencodeParser {
     BencodeParser(std::unique_ptr<std::basic_istream<char>>&& stream) :
         stream(std::move(stream)) {}
 
-    BencodeParser(const char* path) {
+    BencodeParser(const std::string_view path) {
         stream = std::make_unique<std::ifstream>(
-            path,
+            path.data(),
             std::fstream::ios_base::binary
         );
     }
@@ -97,6 +97,10 @@ class BencodeParser {
         return element;
     }
 
+    /*
+     * Consumes the inner stream until eof.
+     * It should only be called once after the constructor.
+     * */
     void parse();
 
   private:
