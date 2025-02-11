@@ -1,11 +1,13 @@
 #include "peer.hpp"
 
 #include <algorithm>
+#include <boost/endian/conversion.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/range/iterator_range_core.hpp>
 #include <boost/range/join.hpp>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 
 #include "message.hpp"
 #include "peer_manager.hpp"
@@ -18,27 +20,38 @@ void Peer::connect() {
     auto ptr = shared_from_this();
     socket.async_connect(endpoint, [this, ptr](const auto& error) {
         if (error) {
-            change_status(Status::Disconnected);
+            change_state(State::Disconnected);
         } else {
-            change_status(Status::Connected);
+            change_state(State::Connected);
         }
     });
 }
 
-void Peer::change_status(Status new_status) {
-    status = new_status;
-    switch (status) {
-        case Status::Connected:
+void Peer::change_state(State new_state) {
+    state = new_state;
+    switch (state) {
+        case State::Connected:
             BOOST_LOG_TRIVIAL(info)
                 << "Active peers: " << peer_manager.get_active_peers()
                 << ", Connected to " << *this;
             start_handshake();
             break;
-        case Status::Disconnected:
+        case State::Disconnected:
             peer_manager.remove(endpoint); // Remove this peer.
             break;
-        case Status::Handshook:
+        case State::Handshook:
             peer_manager.on_handshake(*this);
+            // Bitfield should be immiediately after the handshake.
+            peer_manager.send_message(
+                shared_from_this(),
+                peer_manager.get_pieces().bitfield->as_message()
+            );
+            // Then we send an unchoke message.
+            peer_manager.send_message(
+                shared_from_this(),
+                Message {Message::Id::Unchoke}
+            );
+
             break;
     }
 }
@@ -47,13 +60,10 @@ void Peer::listen_peer() {
     auto ptr = shared_from_this();
     socket.async_receive(
         asio::buffer(buffer),
-        [this, ptr](
-            const auto& error,
-            const auto bytes_read
-        ) mutable {
+        [this, ptr](const auto& error, const auto bytes_read) mutable {
             if (error) {
                 if (!socket.is_open()) {
-                    change_status(Status::Disconnected);
+                    change_state(State::Disconnected);
                 }
                 return;
             }
@@ -75,7 +85,7 @@ void Peer::listen_peer() {
             );
             auto it = packet.begin();
 
-            if (status == Status::Connected) {
+            if (state == State::Connected) {
                 // Still in the handshake phase.
                 // Compare them and disconnect if there is an error.
                 const auto& our_handshake = peer_manager.get_handshake();
@@ -94,17 +104,19 @@ void Peer::listen_peer() {
                 );
 
                 if (!is_header_equal || !is_info_hash_equal) {
-                    change_status(Status::Disconnected);
+                    change_state(State::Disconnected);
                     return;
                 }
 
-                remote_peer_id.resize(20);
+                std::string peer_str;
+                peer_str.resize(20);
                 std::memcpy(
-                    remote_peer_id.data(),
+                    peer_str.data(),
                     buffer.data() + 48,
-                    remote_peer_id.size()
+                    peer_str.size()
                 );
-                change_status(Status::Handshook);
+                remote_peer_id = {std::move(peer_str)};
+                change_state(State::Handshook);
                 it += our_handshake.size();
             }
 
@@ -124,7 +136,9 @@ void Peer::listen_peer() {
                     length - 1
                 };
                 it += length;
+
                 BOOST_LOG_TRIVIAL(info) << *this << " sent: " << message;
+                on_message(std::move(message));
             }
             // Add remains to this buffer.
             remainder_buffer.resize(std::distance(it, packet.end()));
@@ -141,13 +155,65 @@ void Peer::start_handshake() {
         asio::buffer(peer_manager.get_handshake()),
         [this, ptr](const auto& error, const auto bytes_send) {
             if (error) {
-                change_status(Status::Disconnected);
+                change_state(State::Disconnected);
                 return;
             }
             BOOST_LOG_TRIVIAL(info) << "Sent handshake to " << *this;
             listen_peer();
         }
     );
+}
+
+void Peer::on_message(Message message) {
+    auto& payload = message.get_payload();
+    auto& pieces = peer_manager.get_pieces();
+
+    switch (message.get_id()) {
+        case Message::Id::Unchoke: // choke: <len=0001><id=0>
+            peer_choking = false;
+            break;
+        case Message::Id::Choke: // unchoke: <len=0001><id=1>
+            peer_choking = true;
+            break;
+        case Message::Id::Interested: // interested: <len=0001><id=2>
+            peer_interested = true;
+            break;
+        case Message::Id::NotInterested: // not interested: <len=0001><id=3>
+            peer_interested = false;
+            break;
+        case Message::Id::Have: { // have: <len=0005><id=4><piece index>
+            if (payload.size() < 4) {
+                // Invalid payload. Ignore the message.
+                break;
+            }
+            std::uint32_t index = ((std::uint32_t)(payload[0]))
+                | ((std::uint32_t)(payload[1]) << 8)
+                | ((std::uint32_t)(payload[2]) << 16)
+                | ((std::uint32_t)(payload[3]) << 24);
+
+            index = boost::endian::big_to_native(index);
+            peer_bitfield->set_piece(index);
+            break;
+        }
+        case Message::Id::Bitfield: // bitfield: <len=0001+X><id=5><bitfield>
+            if (payload.size() < pieces.bitfield->size()) {
+                // Invalid payload. Ignore the message.
+                break;
+            }
+            peer_bitfield = std::make_unique<Bitfield>(payload);
+            break;
+        case Message::Id::Request:
+            // Peer is requesting a piece.
+            // First check if we have that piece or not.
+
+            break;
+        case Message::Id::Piece:
+            break;
+        case Message::Id::Cancel:
+            break;
+        case Message::Id::InvalidMessage:
+            break;
+    }
 }
 
 } // namespace torrent

@@ -2,14 +2,21 @@
 
 #include <boost/log/trivial.hpp>
 #include <cstdint>
+#include <memory>
+#include <sstream>
 
 #include "tracker.hpp"
 #include "utility.hpp"
 
 namespace torrent {
 
-Client::Client(const std::string_view path, std::uint16_t port) :
-    peer_manager(io_context, port),
+Client::Client(
+    asio::io_context& io_context,
+    const std::string_view path,
+    std::uint16_t port
+) :
+    pieces(std::make_shared<Pieces>(io_context)),
+    peer_manager(io_context, port, pieces),
     bencode_parser(path),
     tracker(io_context),
     random_engine(std::random_device {}()),
@@ -27,7 +34,17 @@ Client::Client(const std::string_view path, std::uint16_t port) :
         peer_id.push_back(alphanum[dist(random_engine)]);
     }
 
-    BOOST_LOG_TRIVIAL(info) << "Peer id: " << peer_id;
+    // Print out the peer id in a printable form.
+    std::stringstream ss;
+    ss << std::hex;
+    for (const auto c : peer_id) {
+        if (std::isprint(c)) {
+            ss << c;
+        } else {
+            ss << "\\x" << (int)((std::uint8_t)c);
+        }
+    }
+    BOOST_LOG_TRIVIAL(info) << "Peer id: " << ss.str();
 }
 
 void Client::start() {
@@ -45,6 +62,16 @@ void Client::start() {
         auto info = info_element.get<BencodeParser::Dictionary>();
         auto info_hash = get_sha1(info_element.to_bencode());
 
+        std::string file_name = info["name"].get<std::string>();
+        int file_length = info["length"].get<int>();
+        int piece_length = info["piece length"].get<int>();
+        // Initialize the pieces with the info.
+        pieces->init(
+            std::move(file_name),
+            file_length,
+            piece_length,
+            info["pieces"].get<std::string>()
+        );
         // Calculate the peer handshake.
         peer_manager.calculate_handshake(info_hash, peer_id);
 
@@ -67,11 +94,13 @@ void Client::start() {
                 peer_manager.add(std::move(endpoint));
             }
         );
-
-        io_context.run();
     } catch (std::runtime_error e) {
         std::cerr << e.what();
     }
+}
+
+void Client::wait() {
+    pieces->wait();
 }
 
 } // namespace torrent

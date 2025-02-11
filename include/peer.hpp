@@ -4,11 +4,17 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/dynamic_bitset.hpp>
 #include <cctype>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <ostream>
+#include <sstream>
 #include <vector>
+
+#include "bitfield.hpp"
+#include "message.hpp"
 
 namespace torrent {
 
@@ -19,7 +25,7 @@ class PeerManager;
 
 class Peer: public std::enable_shared_from_this<Peer> {
   public:
-    enum class Status { Disconnected, Connected, Handshook };
+    enum class State { Disconnected, Connected, Handshook };
 
     Peer(
         PeerManager& peer_manager,
@@ -40,7 +46,7 @@ class Peer: public std::enable_shared_from_this<Peer> {
         io_context(io_context),
         endpoint(socket.remote_endpoint()),
         socket(std::move(socket)) {
-        change_status(Status::Connected);
+        change_state(State::Connected);
     }
 
     Peer(Peer&& peer) :
@@ -72,8 +78,14 @@ class Peer: public std::enable_shared_from_this<Peer> {
         return os;
     }
 
-    Status get_status() const {
-        return status;
+    std::string to_string() const {
+        std::ostringstream oss;
+        oss << *this;
+        return oss.str();
+    }
+
+    State get_state() const {
+        return state;
     }
 
     const tcp::endpoint& get_endpoint() const {
@@ -83,9 +95,12 @@ class Peer: public std::enable_shared_from_this<Peer> {
     friend class PeerManager;
 
   private:
-    void change_status(Status new_status);
+    void change_state(State new_state);
     void listen_peer();
     void start_handshake();
+
+    void send_message(Message message);
+    void on_message(Message message);
 
   private:
     asio::io_context& io_context;
@@ -99,8 +114,18 @@ class Peer: public std::enable_shared_from_this<Peer> {
 
     std::string remote_peer_id;
 
-    Status status = Status::Disconnected;
+    State state = State::Disconnected;
     PeerManager& peer_manager;
+
+  private:
+    bool am_choking = true;
+    bool am_interested = false;
+    bool peer_choking = true;
+    bool peer_interested = false;
+
+    // Bitfield of the remote peer.
+    // Ours is stored in pieces and shared among peers.
+    std::unique_ptr<Bitfield> peer_bitfield;
 };
 
 } // namespace torrent

@@ -34,8 +34,8 @@ target_link_libraries(torrent PRIVATE Boost::endian)
 target_link_libraries(torrent PRIVATE Boost::log)
 
 # open ubsan
-target_compile_options(torrent PRIVATE -fsanitize=undefined)
-target_link_options(torrent PRIVATE -fsanitize=undefined)
+target_compile_options(torrent PRIVATE "-fsanitize=undefined,address")
+target_link_options(torrent PRIVATE "-fsanitize=undefined,address")
 
 include(cmake/CompilerWarnings.cmake)
 set_project_warnings(

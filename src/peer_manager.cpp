@@ -3,8 +3,9 @@
 #include <boost/log/trivial.hpp>
 #include <cstring>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
+
+#include "message.hpp"
 
 namespace torrent {
 
@@ -13,7 +14,7 @@ void PeerManager::calculate_handshake(
     std::string_view peer_id
 ) {
     if (info_hash.size() != 20 || peer_id.size() != 20) {
-        throw new std::runtime_error(
+        throw std::runtime_error(
             "Error while calculating the peer handshake. Illegal arguments"
         );
     }
@@ -42,7 +43,7 @@ void PeerManager::remove(const tcp::endpoint& endpoint) {
     if (peer_it == peers.end()) {
         return;
     }
-    if (peer_it->second->get_status() == Peer::Status::Handshook) {
+    if (peer_it->second->get_state() == Peer::State::Handshook) {
         active_peers -= 1;
     }
 
@@ -54,15 +55,14 @@ void PeerManager::remove(const tcp::endpoint& endpoint) {
 
 void PeerManager::on_handshake(Peer& peer) {
     auto temp = std::move(peer.remote_peer_id);
-    std::ostringstream oss;
-    oss << peer;
+    auto str = peer.to_string();
     peer.remote_peer_id = std::move(temp);
 
     active_peers += 1;
 
     BOOST_LOG_TRIVIAL(info)
-        << "Active peers: " << active_peers
-        << ", Handshake complete: " << oss.str() << " -> " << peer;
+        << "Active peers: " << active_peers << ", Handshake complete: " << str
+        << " -> " << peer;
 }
 
 void PeerManager::accept_new_peers() {
@@ -80,6 +80,32 @@ void PeerManager::accept_new_peers() {
         }
         accept_new_peers();
     });
+}
+
+void PeerManager::send_message(std::shared_ptr<Peer> peer, Message message) {
+    BOOST_LOG_TRIVIAL(info) << "Sending " << message << " to " << *peer;
+
+    send_queue.push(
+        {std::move(peer),
+         std::make_shared<std::vector<std::uint8_t>>(message.into_bytes())}
+    );
+    send_all_messages(); // Call internal function to empty the queue.
+}
+
+void PeerManager::send_all_messages() {
+    while (!send_queue.empty()) {
+        auto [peer, message] = send_queue.pop();
+        peer->socket.async_send(
+            asio::buffer(*message),
+            [peer, message](const auto& error, const auto bytes_send) {
+                if (error) {
+                    BOOST_LOG_TRIVIAL(error)
+                        << "Error while sending a message to " << *peer << ": "
+                        << error.message();
+                }
+            }
+        );
+    }
 }
 
 } // namespace torrent

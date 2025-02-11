@@ -38,8 +38,7 @@ class Tracker {
      * @param add_peer_func a lambda that will get called when a Peer is fetched
      *     lambda should be in this signature: add_peer_func(tcp::endpoint)
      */
-    void
-    initiate_connection(boost::url tracker_url, const auto add_peer_func) {
+    void initiate_connection(boost::url tracker_url, const auto add_peer_func) {
         url = std::move(tracker_url);
         // Firstly resolve the given url to an ip address.
         resolver.async_resolve(
