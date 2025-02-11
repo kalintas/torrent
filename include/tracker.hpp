@@ -39,13 +39,13 @@ class Tracker {
      *     lambda should be in this signature: add_peer_func(tcp::endpoint)
      */
     void
-    initiate_connection(boost::url tracker_url, const auto& add_peer_func) {
+    initiate_connection(boost::url tracker_url, const auto add_peer_func) {
         url = std::move(tracker_url);
         // Firstly resolve the given url to an ip address.
         resolver.async_resolve(
             url.host(),
             url.port(),
-            [this, &add_peer_func](auto error, auto endpoints) {
+            [this, add_peer_func](auto error, auto endpoints) {
                 if (error) {
                     throw std::runtime_error(
                         "Could not resolve the given url: " + error.message()
@@ -55,7 +55,7 @@ class Tracker {
                 asio::async_connect(
                     socket,
                     endpoints,
-                    [&](auto error, auto result) {
+                    [this, add_peer_func](auto error, auto result) {
                         if (error) {
                             throw std::runtime_error(
                                 "Could not connect to the tracker: "
@@ -98,13 +98,13 @@ class Tracker {
      * Listen a HTTP packet from the tracker. 
      * Tracker should give the list of peers in bencode format.
      * */
-    void listen_packet(const auto& add_peer_func) {
+    void listen_packet(const auto add_peer_func) {
         http::async_read(
             socket,
             buffer,
             response,
             [this,
-             &add_peer_func](std::error_code error, std::size_t bytes_read) {
+             add_peer_func](std::error_code error, std::size_t bytes_read) {
                 if (error) {
                     throw std::runtime_error(
                         "Error while listening a packet from tracker: "
@@ -152,9 +152,9 @@ class Tracker {
                     << "Fetched " << (peer_string.size() / 6) << " peers";
 
                 timer.expires_after(asio::chrono::seconds(interval));
-                timer.async_wait([&](auto error) {
+                timer.async_wait([this, add_peer_func](auto error) {
                     if (error) {
-                        throw new std::runtime_error(
+                        throw std::runtime_error(
                             "Error in async_wait: " + error.message() + '\n'
                         );
                     }
