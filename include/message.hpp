@@ -37,6 +37,15 @@ class Message {
         std::copy(it, it + payload_length, payload.begin());
     }
 
+    Message(Id id, std::vector<std::uint8_t> payload) :
+        id(id),
+        payload(std::move(payload)) {
+        if (static_cast<std::uint8_t>(id)
+            > static_cast<std::uint8_t>(Id::InvalidMessage)) {
+            id = Id::InvalidMessage;
+        }
+    }
+
     /*
      * Creates a message with no payload.
      * */
@@ -70,25 +79,32 @@ class Message {
                 os << "NotInterested";
                 break;
             case Id::Have:
-                os << "Have";
+                os << "Have, piece index: " << message.get_int(0);
                 break;
             case Id::Bitfield:
-                os << "Bitfield";
+                os << "Bitfield, bitfield: std::uint8_t["
+                   << message.payload.size() << "]";
                 break;
             case Id::Request:
-                os << "Request";
+                os << "Request, index: " << message.get_int(0)
+                   << ", begin: " << message.get_int(1)
+                   << ", length: " << message.get_int(2);
                 break;
             case Id::Piece:
-                os << "Piece";
+                os << "Piece, index: " << message.get_int(0)
+                   << ", begin: " << message.get_int(1)
+                   << ", block: std::uint8_t[" << message.payload.size() << "]";
                 break;
             case Id::Cancel:
-                os << "Cancel";
+                os << "Cancel, index: " << message.get_int(0)
+                   << ", begin: " << message.get_int(1)
+                   << ", length: " << message.get_int(2);
                 break;
             case Id::InvalidMessage:
-                os << "Invalid";
+                os << "Invalid, listen port: " << message.get_int(0);
                 break;
         }
-        os << ", payload: std::uint8_t[" << message.payload.size() << "] }";
+        os << " }";
         return os;
     }
 
@@ -113,6 +129,33 @@ class Message {
         result.insert(result.begin(), arr.begin(), arr.end());
 
         return result;
+    }
+
+    /*
+     * Returns the nth integer from the payload.
+     * */
+    std::int32_t get_int(std::size_t int_index) const {
+        if (payload.size() < int_index * 4) {
+            throw std::runtime_error(
+                "Message::get_int called with invalid parameters"
+            );
+        }
+        std::int32_t result;
+        std::memcpy(&result, payload.data() + int_index * 4, 4);
+        return boost::endian::big_to_native(result);
+    }
+
+    /*
+     * Writes the parameter int to the payload. Payload must have the required space for it.
+     * */
+    void write_int(std::size_t int_index, std::int32_t value) {
+        if (payload.size() < int_index * 4) {
+            throw std::runtime_error(
+                "Message::get_int called with invalid parameters"
+            );
+        }
+        value = boost::endian::native_to_big(value);
+        std::memcpy(payload.data() + int_index * 4, &value, 4);
     }
 
   private:

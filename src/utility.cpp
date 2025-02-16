@@ -4,9 +4,9 @@
 
 namespace torrent {
 
-std::string get_sha1(const std::string& input) {
+std::string get_sha1(const std::string_view input) {
     boost::uuids::detail::sha1 sha1;
-    sha1.process_bytes(input.c_str(), input.size());
+    sha1.process_bytes(input.data(), input.size());
     std::uint8_t hash[20] = {0};
     sha1.get_digest(hash);
 
@@ -16,7 +16,6 @@ std::string get_sha1(const std::string& input) {
         static_cast<void*>(hash),
         20
     );
-
     return result;
 }
 

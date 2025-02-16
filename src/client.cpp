@@ -103,4 +103,8 @@ void Client::wait() {
     pieces->wait();
 }
 
+void Client::stop() {
+    pieces->stop();
+}
+
 } // namespace torrent

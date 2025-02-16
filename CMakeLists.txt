@@ -18,6 +18,7 @@ set(
     "${TORRENT_SRC_DIR}/peer_manager.cpp" 
     "${TORRENT_SRC_DIR}/utility.cpp" 
     "${TORRENT_SRC_DIR}/client.cpp" 
+    "${TORRENT_SRC_DIR}/pieces.cpp" 
 )
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -36,6 +37,14 @@ target_link_libraries(torrent PRIVATE Boost::log)
 # open ubsan
 target_compile_options(torrent PRIVATE "-fsanitize=undefined,address")
 target_link_options(torrent PRIVATE "-fsanitize=undefined,address")
+
+# Asio uses random access handle in windows and io uring in linux.
+if (NOT WIN32)
+    # So if we are in linux we need to open io_uring in order to use asio files.
+    target_compile_definitions(torrent PRIVATE BOOST_ASIO_HAS_IO_URING)
+    target_link_libraries(torrent PRIVATE uring)
+endif (WIN32)
+
 
 include(cmake/CompilerWarnings.cmake)
 set_project_warnings(

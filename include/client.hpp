@@ -45,14 +45,21 @@ class Client {
      * First il will parse the given torrent file.
      * After it will issue the required funcitons.
      * But it will not do any networking because its async.
+     * Should only be called once after the constructor.
      * */
     void start();
 
     /*
      * Waits until the client is finished downloading.
+     * Is thread safe to call from other threads.
      * */
     void wait();
 
+    /*
+     * Notifies any calls to wait and wakes them in order to stop. 
+     * Is thread safe to call from other threads.
+     * */
+    void stop();
   private:
     std::uint16_t port;
 };

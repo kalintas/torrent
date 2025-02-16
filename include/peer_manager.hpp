@@ -70,14 +70,9 @@ class PeerManager {
         return active_peers;
     }
 
-    const Pieces& get_pieces() const {
-        return *pieces;
-    }
-
-    Pieces& get_pieces() {
-        return *pieces;
-    }
-
+  public:
+    std::shared_ptr<Pieces> pieces;
+  
   private:
     asio::io_context& io_context;
     tcp::acceptor acceptor;
@@ -90,7 +85,6 @@ class PeerManager {
 
     std::unordered_map<tcp::endpoint, std::shared_ptr<Peer>> peers;
 
-    std::shared_ptr<Pieces> pieces;
 
     using SendQueueElement = std::
         pair<std::shared_ptr<Peer>, std::shared_ptr<std::vector<std::uint8_t>>>;

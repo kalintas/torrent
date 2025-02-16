@@ -25,7 +25,7 @@ class PeerManager;
 
 class Peer: public std::enable_shared_from_this<Peer> {
   public:
-    enum class State { Disconnected, Connected, Handshook };
+    enum class State { Disconnected, Connected, Handshook, Idle, DownloadingPiece };
 
     Peer(
         PeerManager& peer_manager,
@@ -116,7 +116,7 @@ class Peer: public std::enable_shared_from_this<Peer> {
 
     State state = State::Disconnected;
     PeerManager& peer_manager;
-
+    PieceIndex current_piece_index; 
   private:
     bool am_choking = true;
     bool am_interested = false;
