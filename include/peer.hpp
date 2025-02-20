@@ -121,8 +121,23 @@ class Peer: public std::enable_shared_from_this<Peer> {
         auto buffer =
             std::make_shared<std::vector<std::uint8_t>>(message.into_bytes());
 
+        send_message_impl(
+            std::move(buffer),
+            std::move(message_str),
+            0,
+            func...
+        );
+    }
+
+    template<typename... Func>
+    void send_message_impl(
+        std::shared_ptr<std::vector<std::uint8_t>> buffer,
+        std::string message_str,
+        std::size_t start,
+        Func... func
+    ) {
         socket.async_send(
-            asio::buffer(*buffer),
+            asio::buffer(buffer->data() + start, buffer->size() - start),
             [self = shared_from_this(),
              buffer,
              str = std::move(message_str),
@@ -131,9 +146,21 @@ class Peer: public std::enable_shared_from_this<Peer> {
                     BOOST_LOG_TRIVIAL(error)
                         << "Error while sending a message to " << *self << ": "
                         << error.message();
+                } else if (buffer->size() != bytes_send) {
+                    // Message is not sent fully.
+                    // Send the remaining part of the message.
+                    self->send_message_impl(
+                        std::move(buffer),
+                        std::move(str),
+                        bytes_send,
+                        func...
+                    );
                 } else {
-                    BOOST_LOG_TRIVIAL(info)
+                    // Sent the message.
+#ifndef NDEBUG
+                    BOOST_LOG_TRIVIAL(debug)
                         << "Sent " << str << " to " << *self;
+#endif
                     (func(self), ...);
                 }
             }
@@ -141,9 +168,7 @@ class Peer: public std::enable_shared_from_this<Peer> {
     }
 
     void on_message(Message message);
-
     void send_requests();
-
     void assign_piece();
 
   private:
@@ -164,7 +189,9 @@ class Peer: public std::enable_shared_from_this<Peer> {
     std::size_t current_block = 0;
     std::size_t piece_received = 0;
 
+    // Constants
     static constexpr std::size_t REQUEST_COUNT_PER_CALL = 6;
+    static constexpr std::size_t MAX_MESSAGE_LENGTH = 1 << 17;
 
     asio::steady_timer timer;
 

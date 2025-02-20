@@ -21,7 +21,9 @@ using PieceIndex = std::optional<std::size_t>;
 class Bitfield {
   public:
     Bitfield() {}
+
     Bitfield(std::size_t bit_count) : vec(bit_count / 8, 0) {}
+
     Bitfield(std::vector<std::uint8_t> vec) : vec(std::move(vec)) {}
 
     std::size_t bit_count() {
@@ -131,75 +133,77 @@ class Bitfield {
         }
         return {};
     }
-        /*
+
+    /*
      * This function must be called if piece has been successfully downloaded.
      * Function will increase bitfield.get_completed_piece_count() effectively.
      * And this piece will not be assignable anymore.
      * */
-        void piece_success(PieceIndex piece_index) {
-            std::scoped_lock<std::mutex> lock {mutex};
-            if (piece_index.has_value()) {
-                completed_piece_count += 1;
-                stop_wait();
-            }
+    void piece_success(PieceIndex piece_index) {
+        std::scoped_lock<std::mutex> lock {mutex};
+        if (piece_index.has_value()) {
+            completed_piece_count += 1;
+            stop_wait();
         }
-        /*
+    }
+
+    /*
      * This function must be called if there was an error while downloading the piece.
      * It will unassign the piece effectively.
      * */
-        void piece_failed(PieceIndex piece_index) {
-            std::scoped_lock<std::mutex> lock {mutex};
-            if (piece_index.has_value()) {
-                // Unset the piece. This way other peers may assign it to themselfs.
-                set_piece_internal(piece_index.value(), 0);
-            }
+    void piece_failed(PieceIndex piece_index) {
+        std::scoped_lock<std::mutex> lock {mutex};
+        if (piece_index.has_value()) {
+            // Unset the piece. This way other peers may assign it to themselfs.
+            set_piece_internal(piece_index.value(), 0);
         }
+    }
 
-        /*
+    /*
      * Waits until a piece is successfully downloaded.
      * */
-        void wait_piece() {
-            std::unique_lock<std::mutex> lock {piece_cv_mutex};
-            cv_should_wake = false;
-            piece_cv.wait(lock, [this] { return cv_should_wake; });
-        }
+    void wait_piece() {
+        std::unique_lock<std::mutex> lock {piece_cv_mutex};
+        cv_should_wake = false;
+        piece_cv.wait(lock, [this] { return cv_should_wake; });
+    }
 
-        /*
+    /*
      * Notifies any ongoing wait and wakes them up.
      * */
-        void stop_wait() {
-            std::scoped_lock<std::mutex> lock {piece_cv_mutex};
-            cv_should_wake = true;
-            piece_cv.notify_all();
-        }
+    void stop_wait() {
+        std::scoped_lock<std::mutex> lock {piece_cv_mutex};
+        cv_should_wake = true;
+        piece_cv.notify_all();
+    }
 
-      private:
-        /*
+  private:
+    /*
      * Internal has_piece function. Does not use any locks.
      * */
-        bool has_piece_internal(std::size_t piece_index) {
-            return (vec[piece_index / 8] >> (7 - (piece_index % 8))) & 1;
-        }
+    bool has_piece_internal(std::size_t piece_index) {
+        return (vec[piece_index / 8] >> (7 - (piece_index % 8))) & 1;
+    }
 
-        /*
+    /*
      * Internal set_piece function. Does not use any locks.
      * @param value Should be either 0 or 1.
      * */
-        void set_piece_internal(std::size_t piece_index, std::uint8_t value) {
-            vec[piece_index / 8] |= (value) << (7 - (piece_index % 8));
-        }
+    void set_piece_internal(std::size_t piece_index, std::uint8_t value) {
+        vec[piece_index / 8] |= (value) << (7 - (piece_index % 8));
+    }
 
-      private:
-        // It's better to use std::vector<std::uint8_t> instead of std::vector<bool> or boost::dynamic_bitset
-        // Because we can move incoming bitfields this way instead of copying them.
-        std::vector<std::uint8_t> vec;
-        std::mutex mutex;
+  private:
+    // It's better to use std::vector<std::uint8_t> instead of std::vector<bool> or boost::dynamic_bitset
+    // Because we can move incoming bitfields this way instead of copying them.
+    std::vector<std::uint8_t> vec;
+    std::mutex mutex;
 
-        std::mutex piece_cv_mutex;
-        std::condition_variable piece_cv;
-        bool cv_should_wake = false;
+    std::mutex piece_cv_mutex;
+    std::condition_variable piece_cv;
+    bool cv_should_wake = false;
 
-        std::size_t completed_piece_count = 0;
-    };
+    std::size_t completed_piece_count = 0;
+};
 } // namespace torrent
 #endif

@@ -105,10 +105,11 @@ class Tracker {
             [this,
              add_peer_func](std::error_code error, std::size_t bytes_read) {
                 if (error) {
-                    throw std::runtime_error(
-                        "Error while listening a packet from tracker: "
-                        + error.message() + '\n'
-                    );
+                    BOOST_LOG_TRIVIAL(error)
+                        << "Error while listening a packet from tracker: "
+                        << error.message();
+                    listen_packet(add_peer_func);
+                    return;
                 }
 
                 BOOST_LOG_TRIVIAL(info)

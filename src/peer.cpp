@@ -135,7 +135,6 @@ void Peer::listen_peer() {
                 4
             );
             length = boost::endian::big_to_native(length);
-            constexpr std::int32_t MAX_MESSAGE_LENGTH = 1 << 17;
             if (length > MAX_MESSAGE_LENGTH) {
                 self->change_state(State::Disconnected);
                 return;
@@ -236,7 +235,9 @@ void Peer::start_handshake() {
 }
 
 void Peer::on_message(Message message) {
-    BOOST_LOG_TRIVIAL(info) << *this << " sent: " << message;
+#ifndef NDEBUG
+    BOOST_LOG_TRIVIAL(debug) << *this << " sent: " << message;
+#endif
     auto& payload = message.get_payload();
 
     switch (message.get_id()) {
@@ -272,9 +273,28 @@ void Peer::on_message(Message message) {
             peer_bitfield = std::make_unique<Bitfield>(payload);
             break;
         case Message::Id::Request: // <len=0013><id=6><index><begin><length>
+        {
             // Peer is requesting a piece.
             // First check if we have that piece or not.
+            const auto index = message.get_int(0);
+            const auto begin = message.get_int(1);
+            const auto length = message.get_int(2);
+
+            if (length > MAX_MESSAGE_LENGTH) {
+                // Close connection when requested a block bigger than 128KB.
+                change_state(State::Disconnected);
+                break;
+            }
+            peer_manager.pieces->read_block_async(
+                index,
+                begin,
+                length,
+                [self = shared_from_this()](Message message) {
+                    self->send_message(std::move(message));
+                }
+            );
             break;
+        }
         case Message::Id::Piece: // <len=0009+X><id=7><index><begin><block>
         {
             if (payload.size() < 8 || !current_piece_index.has_value()) {

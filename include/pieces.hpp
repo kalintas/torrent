@@ -50,8 +50,8 @@ class Pieces {
      *      the operation finishes. Signature should be on_finish(const asio::error_code& error_code, bool piece_complete).
      * */
     void write_block_async(
-        int piece_index,
-        int begin,
+        std::uint32_t piece_index,
+        std::uint32_t begin,
         std::vector<std::uint8_t> payload,
         const auto on_finish
     ) {
@@ -75,6 +75,7 @@ class Pieces {
                         << error_code.message();
                     on_finish(error_code, false);
                 } else {
+                    assert(bytes_transferred == block_size);
                     // Check if this is the last block.
                     // We can do this because our client will always
                     //   request blocks from start to end.
@@ -84,6 +85,48 @@ class Pieces {
                     } else {
                         on_finish(error_code, false);
                     }
+                }
+            }
+        );
+    }
+
+    /*
+     * Reads given block from the file async.
+     * @param on_finish A function that will be called when
+     *      the operation finishes. Signature should be on_finish(Message). 
+     *      Second parameter is a Piece Message ready to send.
+     * */
+    void read_block_async(
+        std::uint32_t piece_index,
+        std::uint32_t begin,
+        std::uint32_t length,
+        const auto on_finish
+    ) {
+        std::scoped_lock<std::mutex> lock {mutex};
+        if (piece_index >= piece_count || begin > piece_length) {
+            // Invalid parameters, ignore.
+            return;
+        }
+        auto buffer_ptr =
+            std::make_shared<std::vector<std::uint8_t>>(length + 8);
+
+        file.async_read_some_at(
+            piece_index * piece_length + begin,
+            asio::buffer(buffer_ptr->data() + 8, length),
+            [=](const auto& error_code, std::size_t bytes_transferred) {
+                if (error_code) {
+                    BOOST_LOG_TRIVIAL(error)
+                        << "Error while reading from the file: "
+                        << error_code.message();
+                } else {
+                    assert(bytes_transferred == buffer_ptr->size());
+                    Message message {
+                        Message::Id::Piece,
+                        std::move(*buffer_ptr)
+                    };
+                    message.write_int(0, piece_index);
+                    message.write_int(1, begin);
+                    on_finish(std::move(message));
                 }
             }
         );
