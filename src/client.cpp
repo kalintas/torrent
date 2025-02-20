@@ -1,12 +1,10 @@
 #include "client.hpp"
 
+#include <openssl/sha.h>
+
 #include <boost/log/trivial.hpp>
 #include <cstdint>
-#include <memory>
 #include <sstream>
-
-#include "tracker.hpp"
-#include "utility.hpp"
 
 namespace torrent {
 
@@ -60,7 +58,13 @@ void Client::start() {
             << "Parsed the torrent file. Announce: " << announce;
         auto info_element = dictionary["info"];
         auto info = info_element.get<BencodeParser::Dictionary>();
-        auto info_hash = get_sha1(info_element.to_bencode());
+        std::string info_hash(20, '\0');
+        auto info_bencode = info_element.to_bencode();
+        SHA1(
+            reinterpret_cast<const unsigned char*>(info_bencode.data()),
+            info_bencode.size(),
+            reinterpret_cast<unsigned char*>(info_hash.data())
+        );
 
         std::string file_name = info["name"].get<std::string>();
         int file_length = info["length"].get<int>();

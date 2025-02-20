@@ -3,6 +3,7 @@
 #include <boost/log/trivial.hpp>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 
 #include "message.hpp"
@@ -33,17 +34,19 @@ void PeerManager::calculate_handshake(
 }
 
 void PeerManager::add(tcp::endpoint endpoint) {
+    std::scoped_lock<std::mutex> lock {mutex};
     auto peer = std::make_shared<Peer>(*this, io_context, endpoint);
     peer->connect();
     peers.insert({std::move(endpoint), std::move(peer)});
 }
 
 void PeerManager::remove(const tcp::endpoint& endpoint) {
+    std::scoped_lock<std::mutex> lock {mutex};
     const auto peer_it = peers.find(endpoint);
     if (peer_it == peers.end()) {
         return;
     }
-    if (peer_it->second->get_state() == Peer::State::Handshook) {
+    if (peer_it->second->get_handshook()) {
         active_peers -= 1;
     }
 
@@ -54,6 +57,7 @@ void PeerManager::remove(const tcp::endpoint& endpoint) {
 }
 
 void PeerManager::on_handshake(Peer& peer) {
+    std::scoped_lock<std::mutex> lock {mutex};
     auto temp = std::move(peer.remote_peer_id);
     auto str = peer.to_string();
     peer.remote_peer_id = std::move(temp);
@@ -80,32 +84,6 @@ void PeerManager::accept_new_peers() {
         }
         accept_new_peers();
     });
-}
-
-void PeerManager::send_message(std::shared_ptr<Peer> peer, Message message) {
-    BOOST_LOG_TRIVIAL(info) << "Sending " << message << " to " << *peer;
-
-    send_queue.push(
-        {std::move(peer),
-         std::make_shared<std::vector<std::uint8_t>>(message.into_bytes())}
-    );
-    send_all_messages(); // Call internal function to empty the queue.
-}
-
-void PeerManager::send_all_messages() {
-    while (!send_queue.empty()) {
-        auto [peer, message] = send_queue.pop();
-        peer->socket.async_send(
-            asio::buffer(*message),
-            [peer, message](const auto& error, const auto bytes_send) {
-                if (error) {
-                    BOOST_LOG_TRIVIAL(error)
-                        << "Error while sending a message to " << *peer << ": "
-                        << error.message();
-                }
-            }
-        );
-    }
 }
 
 } // namespace torrent

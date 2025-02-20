@@ -60,6 +60,7 @@ class Client {
      * Is thread safe to call from other threads.
      * */
     void stop();
+
   private:
     std::uint16_t port;
 };

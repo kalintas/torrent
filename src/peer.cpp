@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <mutex>
 
 #include "message.hpp"
 #include "peer_manager.hpp"
@@ -18,14 +19,16 @@ namespace torrent {
 void Peer::connect() {
     // Capturing a copy of the shared pointer into the lambda will
     //      effectively make the object alive until the lambda gets dropped.
-    auto ptr = shared_from_this();
-    socket.async_connect(endpoint, [this, ptr](const auto& error) {
-        if (error) {
-            change_state(State::Disconnected);
-        } else {
-            change_state(State::Connected);
+    socket.async_connect(
+        endpoint,
+        [self = shared_from_this()](const auto& error) {
+            if (error) {
+                self->change_state(State::Disconnected);
+            } else {
+                self->change_state(State::Connected);
+            }
         }
-    });
+    );
 }
 
 void Peer::change_state(State new_state) {
@@ -38,20 +41,24 @@ void Peer::change_state(State new_state) {
             start_handshake();
             break;
         case State::Disconnected:
+            peer_manager.pieces->bitfield->piece_failed(current_piece_index);
             peer_manager.remove(endpoint); // Remove this peer.
             break;
         case State::Handshook:
+            handshook = true;
             peer_manager.on_handshake(*this);
             // Bitfield should be immiediately after the handshake.
-            peer_manager.send_message(
-                shared_from_this(),
-                peer_manager.pieces->bitfield->as_message()
+
+            send_message(
+                peer_manager.pieces->bitfield->as_message(),
+                [](auto& peer) {
+                    peer->send_message(Message {Message::Id::Unchoke});
+                    peer->send_message(Message {Message::Id::Interested});
+                }
             );
-            // Then we send an unchoke message.
-            peer_manager.send_message(
-                shared_from_this(),
-                Message {Message::Id::Unchoke}
-            );
+
+            // Start listening messages from the peer.
+            listen_peer();
             break;
         case State::Idle:
             // Peer is in idle state.
@@ -59,170 +66,185 @@ void Peer::change_state(State new_state) {
             if (current_piece_index.has_value()) {
                 // This should never happen but check anyway.
                 // State changed to Idle but we already hold a piece_index
-                peer_manager.pieces->bitfield->piece_failed(current_piece_index);
+                peer_manager.pieces->bitfield->piece_failed(current_piece_index
+                );
             }
 
-            current_piece_index = peer_manager.pieces->
-                bitfield->assign_piece(*peer_bitfield);
-
-            if (current_piece_index.has_value()) {
-                BOOST_LOG_TRIVIAL(info) << "Assigned " << current_piece_index.value() << "th piece to " << *this;
-                change_state(State::DownloadingPiece);
-            } else {
-                // Could not assign a piece to this peer.
-                BOOST_LOG_TRIVIAL(error) << "No valid piece for " << *this;
+            if (peer_bitfield == nullptr) {
+                // Peers may not bitfield if they have any piece.
+                // So create an empty bitfield if they didn't already sent one.
+                peer_bitfield = std::make_unique<Bitfield>(
+                    peer_manager.pieces->bitfield->bit_count()
+                );
             }
-            
+            assign_piece();
+
             break;
         case State::DownloadingPiece:
-        {
-            if (!current_piece_index.has_value()) {
-                // This should never happen but check anyway.
-                change_state(State::Idle);
-            }
-
-            // Request the piece block by block.
-            const auto piece_length = peer_manager.pieces->get_piece_length();
-            constexpr std::size_t BLOCK_LENGTH = 1ul << 14;
-            const auto block_count = piece_length / BLOCK_LENGTH;
-            const int piece_index = static_cast<int>(current_piece_index.value()); 
-            std::size_t begin = 0;
-
-            for (std::size_t i = 0; i < block_count; ++i) {
-                auto message = Message{ Message::Id::Request, std::vector<std::uint8_t>(3 * sizeof(int)) };
-                message.write_int(0, piece_index); 
-                message.write_int(1, begin); 
-                std::size_t length = BLOCK_LENGTH;
-                if (i == block_count - 1) {
-                    // Last block, request everything left.
-                    length = piece_length - begin;      
-                }
-                message.write_int(2, length); 
-
-                peer_manager.send_message(shared_from_this(), std::move(message));
-                begin += BLOCK_LENGTH;
-            }
+            send_requests();
             break;
-        }
+    }
+}
+
+void Peer::assign_piece() {
+    current_piece_index =
+        peer_manager.pieces->bitfield->assign_piece(*peer_bitfield);
+
+    if (current_piece_index.has_value()) {
+        BOOST_LOG_TRIVIAL(info) << "Assigned " << current_piece_index.value()
+                                << "th piece to " << *this;
+        assert(peer_bitfield->has_piece(current_piece_index.value()));
+        current_block = 0; // Set current block to 0.
+        change_state(State::DownloadingPiece);
+    } else {
+        // TODO: Terrible implementation. Should be a
+        //      consumer/producer relation with the Bitfield using a condition variable.
+        // Could not assign a piece to this peer.
+        // Wait some time before trying again.
+        BOOST_LOG_TRIVIAL(error) << "No valid piece for " << *this;
+        timer.expires_after(asio::chrono::seconds(10)); // Wait 10 seconds
+        timer.async_wait([self = shared_from_this()](auto error) {
+            if (error) {
+                BOOST_LOG_TRIVIAL(error)
+                    << "Error in async_wait: " << error.message();
+                return;
+            }
+            if (self->state == State::Idle
+                && !self->current_piece_index.has_value()) {
+                // Try to assign a piece again.
+                self->assign_piece();
+            }
+        });
     }
 }
 
 void Peer::listen_peer() {
-    auto ptr = shared_from_this();
+    // First listen the length of the packet, which is 4 bytes exact.
+    buffer.resize(4);
     socket.async_receive(
         asio::buffer(buffer),
-        [this, ptr](const auto& error, const auto bytes_read) mutable {
-            if (error) {
-                if (!socket.is_open()) {
-                    change_state(State::Disconnected);
-                }
+        [self = shared_from_this()](const auto& error, const auto bytes_read) {
+            if (error || bytes_read != self->buffer.size()) {
+                self->change_state(State::Disconnected);
                 return;
             }
-            BOOST_LOG_TRIVIAL(info)
-                << "Read " << bytes_read << " bytes from " << *this;
-
-            if (bytes_read <= 4) {
-                // Possibly a keep alive message.
-                listen_peer();
-                return;
-            }
-
-            auto packet = boost::join(
-                remainder_buffer,
-                boost::make_iterator_range(
-                    buffer.begin(),
-                    buffer.begin() + bytes_read
-                )
+            std::int32_t length;
+            std::memcpy(
+                static_cast<void*>(&length),
+                static_cast<void*>(self->buffer.data()),
+                4
             );
-            auto it = packet.begin();
+            length = boost::endian::big_to_native(length);
+            constexpr std::int32_t MAX_MESSAGE_LENGTH = 1 << 17;
+            if (length > MAX_MESSAGE_LENGTH) {
+                self->change_state(State::Disconnected);
+                return;
+            }
+            if (length == 0) {
+                // Probably a keep alive message. Ignore it.
+                self->listen_peer();
+            } else {
+                self->buffer.resize(length);
+                // Then listen the actual message.
+                self->read_message_bytes = 0;
+                self->listen_message();
+            }
+        }
+    );
+}
 
-            if (state == State::Connected) {
-                // Still in the handshake phase.
-                // Compare them and disconnect if there is an error.
-                const auto& our_handshake = peer_manager.get_handshake();
-                bool is_header_equal = std::equal(
-                    buffer.begin(),
-                    buffer.begin() + 20,
-                    our_handshake.begin(),
-                    our_handshake.begin() + 20
-                );
+void Peer::listen_message() {
+    socket.async_receive(
+        asio::buffer(
+            buffer.data() + read_message_bytes,
+            buffer.size() - read_message_bytes
+        ),
+        [self = shared_from_this()](const auto& error, const auto bytes_read) {
+            if (error) {
+                self->change_state(State::Disconnected);
+                return;
+            }
+            self->read_message_bytes += bytes_read;
+            if (self->read_message_bytes < self->buffer.size()) {
+                self->listen_message(); // Listen the rest of the message.
+            } else {
+                // Message is complete.
+                self->on_message(Message {self->buffer});
+                self->listen_peer();
+            }
+        }
+    );
+}
 
-                bool is_info_hash_equal = std::equal(
-                    buffer.begin() + 28,
-                    buffer.begin() + 48,
-                    our_handshake.begin() + 28,
-                    our_handshake.begin() + 48
-                );
+void Peer::listen_handshake() {
+    buffer.resize(peer_manager.get_handshake().size());
+    socket.async_receive(
+        asio::buffer(buffer),
+        [self = shared_from_this()](const auto& error, const auto bytes_read) {
+            if (error || bytes_read != self->buffer.size()) {
+                self->change_state(State::Disconnected);
+                return;
+            }
+            // Compare them and disconnect if there is an error.
+            const auto& our_handshake = self->peer_manager.get_handshake();
+            bool is_header_equal = std::equal(
+                self->buffer.begin(),
+                self->buffer.begin() + 20,
+                our_handshake.begin(),
+                our_handshake.begin() + 20
+            );
 
-                if (!is_header_equal || !is_info_hash_equal) {
-                    change_state(State::Disconnected);
-                    return;
-                }
+            bool is_info_hash_equal = std::equal(
+                self->buffer.begin() + 28,
+                self->buffer.begin() + 48,
+                our_handshake.begin() + 28,
+                our_handshake.begin() + 48
+            );
 
-                std::string peer_str;
-                peer_str.resize(20);
-                std::memcpy(
-                    peer_str.data(),
-                    buffer.data() + 48,
-                    peer_str.size()
-                );
-                remote_peer_id = {std::move(peer_str)};
-                change_state(State::Handshook);
-                it += our_handshake.size();
+            if (!is_header_equal || !is_info_hash_equal) {
+                self->change_state(State::Disconnected);
+                return;
             }
 
-
-            while (5 <= std::distance(it, packet.end())) {
-                std::uint32_t length = (std::uint32_t)(*(it))
-                    | ((std::uint32_t)(*(it + 1)) << 8)
-                    | ((std::uint32_t)(*(it + 2)) << 16)
-                    | ((std::uint32_t)(*(it + 3)) << 24);
-                it += 4;
-                length = boost::endian::big_to_native(length);
-                if (length > std::distance(it, packet.end())) {
-                    break;
-                }
-                Message message {
-                    static_cast<Message::Id>(*it),
-                    it + 1,
-                    length - 1
-                };
-                it += length;
-
-                BOOST_LOG_TRIVIAL(info) << *this << " sent: " << message;
-                on_message(std::move(message));
-            }
-            // Add remains to this buffer.
-            remainder_buffer.resize(std::distance(it, packet.end()));
-            std::copy(it, packet.end(), remainder_buffer.begin());
-
-            listen_peer();
+            std::string peer_str;
+            peer_str.resize(20);
+            std::memcpy(
+                peer_str.data(),
+                self->buffer.data() + 48,
+                peer_str.size()
+            );
+            self->remote_peer_id = {std::move(peer_str)};
+            self->change_state(State::Handshook);
         }
     );
 }
 
 void Peer::start_handshake() {
-    auto ptr = shared_from_this();
+    // First send the handshake.
     socket.async_send(
         asio::buffer(peer_manager.get_handshake()),
-        [this, ptr](const auto& error, const auto bytes_send) {
+        [self = shared_from_this()](const auto& error, const auto bytes_send) {
             if (error) {
-                change_state(State::Disconnected);
+                self->change_state(State::Disconnected);
                 return;
             }
-            BOOST_LOG_TRIVIAL(info) << "Sent handshake to " << *this;
-            listen_peer();
+            BOOST_LOG_TRIVIAL(info) << "Sent handshake to " << *self;
+            // After sending it start to listen the peer for a handshake.
+            self->listen_handshake();
         }
     );
 }
 
 void Peer::on_message(Message message) {
+    BOOST_LOG_TRIVIAL(info) << *this << " sent: " << message;
     auto& payload = message.get_payload();
 
     switch (message.get_id()) {
         case Message::Id::Unchoke: // choke: <len=0001><id=0>
             peer_choking = false;
-            change_state(State::Idle); 
+            if (state == State::Handshook) {
+                change_state(State::Idle);
+            }
             break;
         case Message::Id::Choke: // unchoke: <len=0001><id=1>
             peer_choking = true;
@@ -258,23 +280,79 @@ void Peer::on_message(Message message) {
             if (payload.size() < 8 || !current_piece_index.has_value()) {
                 // Invalid payload. Ignore the message.
                 break;
-            } 
+            }
             const auto index = message.get_int(0);
             const auto begin = message.get_int(1);
-            peer_manager.pieces->write_block_async(index, begin, std::move(payload), 
-            [this] (const auto& error_code, bool finished) {
-                if (!error_code && finished) {
-                    // Finished downloading the piece.
-                    peer_manager.pieces->bitfield->piece_success(current_piece_index); 
-                    change_state(State::Idle);
-                } 
-            });
+            peer_manager.pieces->write_block_async(
+                index,
+                begin,
+                std::move(payload),
+                [self = shared_from_this(
+                 )](const auto& error_code, bool finished) {
+                    std::scoped_lock<std::mutex> lock {self->mutex};
+                    self->piece_received += 1;
+                    if (error_code) {
+                        self->current_block -= REQUEST_COUNT_PER_CALL;
+                    } else if (finished) {
+                        // Finished downloading the piece.
+                        auto& pieces = self->peer_manager.pieces;
+                        BOOST_LOG_TRIVIAL(info)
+                            << "["
+                            << pieces->bitfield->get_completed_piece_count()
+                            << "/" << pieces->get_piece_count()
+                            << "]. Finished piece#"
+                            << self->current_piece_index.value() << ".";
+                        self->peer_manager.pieces->bitfield->piece_success(
+                            self->current_piece_index
+                        );
+                        self->change_state(State::Idle);
+                    } else if (self->current_block
+                               < self->peer_manager.pieces->get_block_count()) {
+                        if (self->piece_received == REQUEST_COUNT_PER_CALL) {
+                            self->send_requests(); // Request pieces again.
+                        }
+                        return;
+                    }
+                }
+            );
             break;
-        }    
+        }
         case Message::Id::Cancel:
             break;
         case Message::Id::InvalidMessage:
             break;
+    }
+}
+
+void Peer::send_requests() {
+    if (!current_piece_index.has_value()) {
+        // This should never happen but check anyway.
+        change_state(State::Idle);
+    }
+    // Request the piece block by block.
+    const auto piece_length = peer_manager.pieces->get_piece_length();
+    const auto block_count = peer_manager.pieces->get_block_count();
+    const auto piece_index =
+        static_cast<std::uint32_t>(current_piece_index.value());
+
+    const auto end_block =
+        std::min(block_count, current_block + REQUEST_COUNT_PER_CALL);
+    piece_received = 0;
+    for (; current_block < end_block; ++current_block) {
+        auto message = Message {
+            Message::Id::Request,
+            std::vector<std::uint8_t>(3 * sizeof(int))
+        };
+        message.write_int(0, piece_index);
+        const std::uint32_t begin = current_block * Pieces::BLOCK_LENGTH;
+        message.write_int(1, begin);
+        std::uint32_t length = Pieces::BLOCK_LENGTH;
+        if (current_block == block_count - 1) {
+            // Last block, request everything left.
+            length = piece_length - begin;
+        }
+        message.write_int(2, length);
+        send_message(std::move(message));
     }
 }
 

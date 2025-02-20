@@ -4,9 +4,9 @@
 #include <filesystem>
 #include <stdexcept>
 
-#include "utility.hpp"
-
 namespace torrent {
+
+std::size_t Pieces::BLOCK_LENGTH = 1 << 14;
 
 void Pieces::init(
     std::string file_name,
@@ -48,26 +48,30 @@ void Pieces::init(
         buffer.resize(file_length - file_size, 0);
         file.write_some_at(file_size, asio::buffer(buffer));
     }
-      
+
     auto file_megabytes = file_length / (1024 * 1024);
-    BOOST_LOG_TRIVIAL(info) << "Opened the file " << file_name << " (" << file_megabytes << " Mb).";
+    BOOST_LOG_TRIVIAL(info)
+        << "Opened the file " << file_name << " (" << file_megabytes << " Mb).";
 
     if (file_exists) {
-        // Run SHA1 checksum if file already exists.    
-        // run_sha1_checksum_multithread();
+        // Run SHA1 checksum if file already exists.
+        run_sha1_checksum_multithread();
     }
 }
 
 void Pieces::wait() {
-    while (!finished) {
-        std::unique_lock<std::mutex> lock {cv_mutex};
-        cv.wait(lock);
+    while (running) {
+        bitfield->wait_piece(); // Wait until a piece is downloaded.
+        if (bitfield->get_completed_piece_count() == piece_count) {
+            // File is ready.
+            return;
+        }
     }
 }
 
 void Pieces::stop() {
-    std::unique_lock<std::mutex> lock {cv_mutex};
-    cv.notify_all();
+    running = false;
+    bitfield->stop_wait();
 }
 
 void Pieces::check_pieces_sha1(std::size_t start_piece, std::size_t end_piece) {
@@ -98,7 +102,8 @@ void Pieces::run_sha1_checksum_multithread() {
     const auto thread_count = std::thread::hardware_concurrency();
     thread_pool.reserve(thread_count);
 
-    BOOST_LOG_TRIVIAL(info) << "Starting the SHA1 checksum with " << thread_count << " threads.";
+    BOOST_LOG_TRIVIAL(info)
+        << "Starting the SHA1 checksum with " << thread_count << " threads.";
 
     // Start the timer
     auto start = std::chrono::steady_clock::now();
@@ -122,14 +127,18 @@ void Pieces::run_sha1_checksum_multithread() {
         thread.join();
     }
 
+    if (bitfield->get_completed_piece_count() == piece_count) {
+        running = false; // File is already ready.
+    }
+
     auto end = std::chrono::steady_clock::now();
     auto elapsed =
         std::chrono::duration_cast<std::chrono::seconds>(end - start);
 
     BOOST_LOG_TRIVIAL(info)
         << "Finished SHA1 checksum in " << elapsed.count() << " seconds. Found "
-        << bitfield->get_piece_count() << " valid pieces out of " << piece_count << ".";
-
+        << bitfield->get_completed_piece_count() << " valid pieces out of "
+        << piece_count << ".";
 }
 
 } // namespace torrent

@@ -25,7 +25,13 @@ class PeerManager;
 
 class Peer: public std::enable_shared_from_this<Peer> {
   public:
-    enum class State { Disconnected, Connected, Handshook, Idle, DownloadingPiece };
+    enum class State {
+        Disconnected,
+        Connected,
+        Handshook,
+        Idle,
+        DownloadingPiece
+    };
 
     Peer(
         PeerManager& peer_manager,
@@ -35,6 +41,7 @@ class Peer: public std::enable_shared_from_this<Peer> {
         peer_manager(peer_manager),
         io_context(io_context),
         endpoint(std::move(endpoint)),
+        timer(io_context),
         socket(io_context) {}
 
     Peer(
@@ -44,6 +51,7 @@ class Peer: public std::enable_shared_from_this<Peer> {
     ) :
         peer_manager(peer_manager),
         io_context(io_context),
+        timer(io_context),
         endpoint(socket.remote_endpoint()),
         socket(std::move(socket)) {
         change_state(State::Connected);
@@ -52,6 +60,7 @@ class Peer: public std::enable_shared_from_this<Peer> {
     Peer(Peer&& peer) :
         peer_manager(peer.peer_manager),
         io_context(peer.io_context),
+        timer(io_context),
         socket(std::move(peer.socket)),
         endpoint(std::move(peer.endpoint)) {}
 
@@ -88,6 +97,10 @@ class Peer: public std::enable_shared_from_this<Peer> {
         return state;
     }
 
+    bool get_handshook() const {
+        return handshook;
+    }
+
     const tcp::endpoint& get_endpoint() const {
         return endpoint;
     }
@@ -97,31 +110,71 @@ class Peer: public std::enable_shared_from_this<Peer> {
   private:
     void change_state(State new_state);
     void listen_peer();
+    void listen_message();
+
+    void listen_handshake();
     void start_handshake();
 
-    void send_message(Message message);
+    template<typename... Func>
+    void send_message(Message message, Func... func) {
+        std::string message_str = message.to_string();
+        auto buffer =
+            std::make_shared<std::vector<std::uint8_t>>(message.into_bytes());
+
+        socket.async_send(
+            asio::buffer(*buffer),
+            [self = shared_from_this(),
+             buffer,
+             str = std::move(message_str),
+             func...](const auto& error, const auto bytes_send) {
+                if (error) {
+                    BOOST_LOG_TRIVIAL(error)
+                        << "Error while sending a message to " << *self << ": "
+                        << error.message();
+                } else {
+                    BOOST_LOG_TRIVIAL(info)
+                        << "Sent " << str << " to " << *self;
+                    (func(self), ...);
+                }
+            }
+        );
+    }
+
     void on_message(Message message);
+
+    void send_requests();
+
+    void assign_piece();
 
   private:
     asio::io_context& io_context;
     tcp::socket socket;
     tcp::endpoint endpoint;
 
-    static constexpr std::size_t BUFFER_SIZE = 1024;
-
-    std::array<std::uint8_t, BUFFER_SIZE> buffer;
-    std::vector<std::uint8_t> remainder_buffer;
+    std::vector<std::uint8_t> buffer;
+    std::size_t read_message_bytes = 0;
 
     std::string remote_peer_id;
 
     State state = State::Disconnected;
     PeerManager& peer_manager;
-    PieceIndex current_piece_index; 
+    PieceIndex current_piece_index;
+
+    std::mutex mutex;
+    std::size_t current_block = 0;
+    std::size_t piece_received = 0;
+
+    static constexpr std::size_t REQUEST_COUNT_PER_CALL = 6;
+
+    asio::steady_timer timer;
+
   private:
     bool am_choking = true;
     bool am_interested = false;
     bool peer_choking = true;
     bool peer_interested = false;
+
+    bool handshook = false;
 
     // Bitfield of the remote peer.
     // Ours is stored in pieces and shared among peers.

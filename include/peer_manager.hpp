@@ -4,13 +4,11 @@
 #include <boost/lockfree/queue.hpp>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string_view>
-#include <utility>
 
-#include "message.hpp"
 #include "peer.hpp"
 #include "pieces.hpp"
-#include "thread_safe_queue.hpp"
 
 namespace torrent {
 
@@ -47,11 +45,6 @@ class PeerManager {
      * */
     void accept_new_peers();
 
-    /*
-     * Adds message to internal send queue. Message will be send effectively.
-     * */
-    void send_message(std::shared_ptr<Peer> peer, Message message);
-
     void on_handshake(Peer& peer);
 
   private:
@@ -72,11 +65,13 @@ class PeerManager {
 
   public:
     std::shared_ptr<Pieces> pieces;
-  
+
   private:
     asio::io_context& io_context;
     tcp::acceptor acceptor;
     tcp::socket new_peer_socket;
+
+    std::mutex mutex;
 
     static constexpr std::size_t HANDSHAKE_SIZE = 68;
     std::array<std::uint8_t, HANDSHAKE_SIZE> handshake;
@@ -84,11 +79,6 @@ class PeerManager {
     int active_peers = 0;
 
     std::unordered_map<tcp::endpoint, std::shared_ptr<Peer>> peers;
-
-
-    using SendQueueElement = std::
-        pair<std::shared_ptr<Peer>, std::shared_ptr<std::vector<std::uint8_t>>>;
-    ThreadSafeQueue<SendQueueElement> send_queue;
 };
 } // namespace torrent
 

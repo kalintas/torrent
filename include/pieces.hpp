@@ -1,6 +1,8 @@
 #ifndef TORRENT_PIECES_HPP
 #define TORRENT_PIECES_HPP
 
+#include <openssl/sha.h>
+
 #include <boost/asio.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/file_base.hpp>
@@ -16,7 +18,6 @@
 #include <string>
 
 #include "bitfield.hpp"
-#include "utility.hpp"
 
 namespace torrent {
 
@@ -79,7 +80,7 @@ class Pieces {
                     //   request blocks from start to end.
                     if (begin + block_size >= piece_length) {
                         // Run an SHA1 check for this piece.
-                        check_sha1_piece_async(piece_index, on_finish); 
+                        check_sha1_piece_async(piece_index, on_finish);
                     } else {
                         on_finish(error_code, false);
                     }
@@ -88,10 +89,19 @@ class Pieces {
         );
     }
 
-    /**/
     std::size_t get_piece_length() {
         std::scoped_lock<std::mutex> lock {mutex};
         return piece_length;
+    }
+
+    std::size_t get_piece_count() {
+        std::scoped_lock<std::mutex> lock {mutex};
+        return piece_count;
+    }
+
+    std::size_t get_block_count() {
+        std::scoped_lock<std::mutex> lock {mutex};
+        return piece_length / BLOCK_LENGTH;
     }
 
     /*
@@ -104,6 +114,9 @@ class Pieces {
      * */
     void stop();
 
+  public:
+    static std::size_t BLOCK_LENGTH;
+
   private:
     /*
      * Runs an SHA1 check over the given piece.
@@ -112,35 +125,45 @@ class Pieces {
      *      signature should be "on_finish(const asio::error_code& error_code, bool sha1_passed)"
      * */
     void check_sha1_piece_async(std::size_t piece_index, const auto on_finish) {
-        auto buffer_ptr =
-            std::make_shared<std::string>(piece_length, '\0');
+        auto buffer_ptr = std::make_shared<std::string>(piece_length, '\0');
 
         file.async_read_some_at(
             piece_index * piece_length,
             asio::buffer(*buffer_ptr),
             [=, this](const auto& error_code, std::size_t bytes_transferred) {
                 if (error_code || bytes_transferred != piece_length) {
-                    BOOST_LOG_TRIVIAL(error) << "Error while reading from the file: " << error_code.message();
-                    on_finish(error_code, false); 
+                    BOOST_LOG_TRIVIAL(error)
+                        << "Error while reading from the file: "
+                        << error_code.message();
+                    on_finish(error_code, false);
                     return;
-                } 
-                on_finish(error_code, check_sha1_piece(piece_index, *buffer_ptr));
+                }
+                on_finish(
+                    error_code,
+                    check_sha1_piece(piece_index, *buffer_ptr)
+                );
                 return;
             }
         );
     }
-    
+
     /*
      * Checks SHA1 for the given piece.
      * @return Returns true if piece passed SHA1 check, false if not.
      * */
-    bool check_sha1_piece(std::size_t piece_index, const std::string_view piece) {
-        auto sha1 = get_sha1(piece);
+    bool
+    check_sha1_piece(std::size_t piece_index, const std::string_view piece) {
+        unsigned char hash[20];
+        SHA1(
+            reinterpret_cast<const unsigned char*>(piece.data()),
+            piece.size(),
+            hash
+        );
         int sha1_check = std::memcmp(
             static_cast<const void*>(&hashes[piece_index * 20]),
-            static_cast<const void*>(sha1.c_str()),
+            static_cast<const void*>(hash),
             20
-        ); 
+        );
         return sha1_check == 0;
     }
 
@@ -166,7 +189,7 @@ class Pieces {
     std::size_t piece_count;
     std::size_t piece_length;
 
-    bool finished = false;
+    bool running = true;
     std::mutex cv_mutex;
     std::condition_variable cv;
 

@@ -5,7 +5,9 @@
 #include <boost/endian/conversion.hpp>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
@@ -26,6 +28,9 @@ class Message {
         InvalidMessage,
     };
 
+    /*
+     * Creates a Message object from given Id and payload.
+     * */
     template<typename Iterator>
     Message(Id id, Iterator it, std::size_t payload_length) : id(id) {
         if (static_cast<std::uint8_t>(id)
@@ -37,6 +42,23 @@ class Message {
         std::copy(it, it + payload_length, payload.begin());
     }
 
+    /*
+     * Creates a Message object from given bytes.
+     * */
+    Message(const std::vector<std::uint8_t>& bytes) :
+        id(static_cast<Id>(bytes[0])) {
+        if (static_cast<std::uint8_t>(id)
+            > static_cast<std::uint8_t>(Id::InvalidMessage)) {
+            id = Id::InvalidMessage;
+        }
+        payload.resize(bytes.size() - 1);
+        std::copy(bytes.begin() + 1, bytes.end(), payload.begin());
+    }
+
+    /*
+     * Creates a Message object from given Id and payload vector. 
+     * Moves the given payload.
+     * */
     Message(Id id, std::vector<std::uint8_t> payload) :
         id(id),
         payload(std::move(payload)) {
@@ -116,13 +138,15 @@ class Message {
      * */
     [[nodiscard]] std::vector<std::uint8_t> into_bytes() const {
         std::array<std::uint8_t, 5> arr;
-        std::uint32_t length = boost::endian::native_to_big(1 + payload.size());
+        std::uint32_t length = boost::endian::native_to_big(
+            static_cast<std::uint32_t>(1 + payload.size())
+        );
         std::memcpy(
             static_cast<void*>(arr.data()),
             static_cast<void*>(&length),
             sizeof(length)
         );
-        arr[4] = static_cast<int>(id);
+        arr[4] = static_cast<std::uint8_t>(id);
         std::vector<std::uint8_t> result = std::move(payload);
 
         result.reserve(result.size() + arr.size());
@@ -134,13 +158,13 @@ class Message {
     /*
      * Returns the nth integer from the payload.
      * */
-    std::int32_t get_int(std::size_t int_index) const {
+    std::uint32_t get_int(std::size_t int_index) const {
         if (payload.size() < int_index * 4) {
             throw std::runtime_error(
                 "Message::get_int called with invalid parameters"
             );
         }
-        std::int32_t result;
+        std::uint32_t result;
         std::memcpy(&result, payload.data() + int_index * 4, 4);
         return boost::endian::big_to_native(result);
     }
@@ -148,7 +172,7 @@ class Message {
     /*
      * Writes the parameter int to the payload. Payload must have the required space for it.
      * */
-    void write_int(std::size_t int_index, std::int32_t value) {
+    void write_int(std::size_t int_index, std::uint32_t value) {
         if (payload.size() < int_index * 4) {
             throw std::runtime_error(
                 "Message::get_int called with invalid parameters"
@@ -156,6 +180,12 @@ class Message {
         }
         value = boost::endian::native_to_big(value);
         std::memcpy(payload.data() + int_index * 4, &value, 4);
+    }
+
+    std::string to_string() const {
+        std::ostringstream oss;
+        oss << *this;
+        return oss.str();
     }
 
   private:

@@ -12,23 +12,26 @@
 namespace asio = boost::asio;
 
 int main() {
-    asio::io_context io_context;
-    auto client = std::make_shared<torrent::Client>(io_context, "./res/debian.iso.torrent");
-    client->start();
+    auto start = std::chrono::steady_clock::now(); // Start the timer.
 
+    asio::io_context io_context;
+    auto client = std::make_shared<torrent::Client>(
+        io_context,
+        "./res/debian.iso.torrent"
+    );
+    client->start();
     std::vector<std::thread> thread_pool;
 
     for (std::size_t i = 0; i < std::thread::hardware_concurrency(); ++i) {
-        thread_pool.emplace_back(
-            std::thread {[&io_context, client] () {
-                try {
-                    io_context.run();
-                } catch (std::runtime_error error) {
-                    BOOST_LOG_TRIVIAL(error) << "Fatal error running the client: " << error.what();
-                    client->stop(); // Stop waiting and close the program.
-                }
-            } }
-        );
+        thread_pool.emplace_back(std::thread {[&io_context, client]() {
+            try {
+                io_context.run();
+            } catch (std::runtime_error error) {
+                BOOST_LOG_TRIVIAL(error)
+                    << "Fatal error running the client: " << error.what();
+                client->stop(); // Stop waiting and close the program.
+            }
+        }});
     }
     // Wait until the client is finished.
     client->wait();
@@ -38,4 +41,12 @@ int main() {
     for (auto& thread : thread_pool) {
         thread.join();
     }
+
+    // End the timer.
+    auto end = std::chrono::steady_clock::now();
+    auto elapsed =
+        std::chrono::duration_cast<std::chrono::seconds>(end - start);
+
+    BOOST_LOG_TRIVIAL(info) << "Finished downloading the file in "
+                            << elapsed.count() << " seconds.";
 }
