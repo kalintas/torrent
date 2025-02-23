@@ -2,6 +2,7 @@
 #define TORRENT_BENCODE_PARSER_HPP
 
 #include <cctype>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <istream>
@@ -23,17 +24,16 @@ class BencodeParser {
     struct Element;
     using List = std::vector<Element>;
     using Dictionary = std::map<std::string, Element>;
+    using Integer = std::int64_t;
+    using String = std::string;
 
     struct Element {
-        using Type = std::variant<int, std::string, List, Dictionary>;
+        using Type = std::variant<Integer, String, List, Dictionary>;
         Type value;
 
         Element(Element&& element) : value(std::move(element.value)) {}
-
         Element(const Element& element) : value(element.value) {}
-
         Element() {}
-
         Element(Type value) : value(std::move(value)) {}
 
         Element& operator=(Element element) {

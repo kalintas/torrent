@@ -52,8 +52,8 @@ void BencodeParser::Element::element_to_json(
 ) {
     std::visit(
         overloaded {
-            [&](const int value) { stream << value; },
-            [&](const std::string& value) {
+            [&](const Integer value) { stream << value; },
+            [&](const String& value) {
                 stream << '"';
                 convert_to_valid_json(value, stream);
                 stream << '"';
@@ -101,7 +101,7 @@ void BencodeParser::Element::element_to_bencode(
             },
             [&](const List& list) {
                 stream << 'l';
-                for (int i = 0; i < list.size(); ++i) {
+                for (std::size_t i = 0; i < list.size(); ++i) {
                     element_to_bencode(list[i], stream);
                 }
                 stream << 'e';
@@ -156,7 +156,7 @@ BencodeParser::Element BencodeParser::parse_next(char next_char) {
 
 BencodeParser::Element BencodeParser::parse_int() {
     stream->get();
-    int value;
+    Integer value;
     *stream >> value;
     if (stream->get() != 'e') {
         throw std::runtime_error {"Parsing error while parsing an integer."};
@@ -165,7 +165,7 @@ BencodeParser::Element BencodeParser::parse_int() {
 }
 
 BencodeParser::Element BencodeParser::parse_string() {
-    int length;
+    Integer length;
     *stream >> length;
     if (stream->get() != ':') {
         throw std::runtime_error {"Parsing error while parsing a byte string."};
