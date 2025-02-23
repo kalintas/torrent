@@ -21,12 +21,16 @@ using PieceIndex = std::optional<std::size_t>;
 class Bitfield {
   public:
     Bitfield() {}
-    Bitfield(std::size_t bit_count) : vec((bit_count / 8) + (bit_count % 8 != 0), 0), bit_count(bit_count) {}
+
+    Bitfield(std::size_t bit_count) :
+        vec((bit_count / 8) + (bit_count % 8 != 0), 0),
+        bit_count(bit_count) {}
+
     Bitfield(std::vector<std::uint8_t> vec) : vec(std::move(vec)) {}
 
     std::size_t get_bit_count() {
         std::scoped_lock<std::mutex> lock {mutex};
-        return bit_count; 
+        return bit_count;
     }
 
     std::size_t size() {

@@ -32,8 +32,11 @@ class BencodeParser {
         Type value;
 
         Element(Element&& element) : value(std::move(element.value)) {}
+
         Element(const Element& element) : value(element.value) {}
+
         Element() {}
+
         Element(Type value) : value(std::move(value)) {}
 
         Element& operator=(Element element) {
