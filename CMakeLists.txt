@@ -13,6 +13,8 @@ set(
     "${TORRENT_SRC_DIR}/peer_manager.cpp" 
     "${TORRENT_SRC_DIR}/client.cpp" 
     "${TORRENT_SRC_DIR}/pieces.cpp" 
+    "${TORRENT_SRC_DIR}/tracker.cpp" 
+    "${TORRENT_SRC_DIR}/udp_tracker.cpp" 
 )
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
