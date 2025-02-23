@@ -74,7 +74,7 @@ void Peer::change_state(State new_state) {
                 // Peers may not bitfield if they have any piece.
                 // So create an empty bitfield if they didn't already sent one.
                 peer_bitfield = std::make_unique<Bitfield>(
-                    peer_manager.pieces->bitfield->get_bit_count()
+                    peer_manager.pieces->bitfield->size()
                 );
             }
             assign_piece();

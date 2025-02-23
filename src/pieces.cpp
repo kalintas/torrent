@@ -19,7 +19,7 @@ void Pieces::init(
     // Every piece holds 20 bytes in info.pieces
     // We can get the total piece count just by dividing with 20.
     piece_count = pieces.size() / 20;
-    bitfield = std::make_unique<Bitfield>(piece_count);
+    bitfield = std::make_unique<Bitfield>((piece_count / 8) + (piece_count % 8 != 0));
 
     hashes = std::move(pieces);
     piece_length = p_length;
