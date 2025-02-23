@@ -1,5 +1,7 @@
 #include <boost/asio.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ssl.hpp>
+#include <boost/asio/ssl/verify_mode.hpp>
 #include <boost/bind/bind.hpp>
 #include <boost/log/trivial.hpp>
 #include <memory>
@@ -11,14 +13,15 @@
 
 namespace asio = boost::asio;
 
-int main() {
+int main(const int argc, const char* argv[]) {
     auto start = std::chrono::steady_clock::now(); // Start the timer.
 
     asio::io_context io_context;
-    auto client = std::make_shared<torrent::Client>(
-        io_context,
-        "./res/debian.iso.torrent"
-    );
+    asio::ssl::context ssl_context(asio::ssl::context::tls_client
+    ); // Create the ssl context.
+    ssl_context.set_default_verify_paths();
+    auto client =
+        std::make_shared<torrent::Client>(io_context, ssl_context, argv[1]);
     client->start();
     std::vector<std::thread> thread_pool;
 

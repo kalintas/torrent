@@ -60,6 +60,9 @@ void Pieces::init(
 }
 
 void Pieces::wait() {
+    if (bitfield == nullptr) {
+        return;
+    }
     while (running) {
         bitfield->wait_piece(); // Wait until a piece is downloaded.
         if (bitfield->get_completed_piece_count() == piece_count) {
