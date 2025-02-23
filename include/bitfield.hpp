@@ -21,14 +21,12 @@ using PieceIndex = std::optional<std::size_t>;
 class Bitfield {
   public:
     Bitfield() {}
-
-    Bitfield(std::size_t bit_count) : vec(bit_count / 8, 0) {}
-
+    Bitfield(std::size_t bit_count) : vec((bit_count / 8) + (bit_count % 8 != 0), 0), bit_count(bit_count) {}
     Bitfield(std::vector<std::uint8_t> vec) : vec(std::move(vec)) {}
 
-    std::size_t bit_count() {
+    std::size_t get_bit_count() {
         std::scoped_lock<std::mutex> lock {mutex};
-        return vec.size() * 8;
+        return bit_count; 
     }
 
     std::size_t size() {
@@ -60,8 +58,7 @@ class Bitfield {
      * */
     bool has_piece(std::size_t piece_index) {
         std::scoped_lock<std::mutex> lock {mutex};
-        auto vec_index = piece_index / 8;
-        if (vec_index >= vec.size()) {
+        if (piece_index >= bit_count) {
             BOOST_LOG_TRIVIAL(error)
                 << "Bitfield::has_piece called with invalid parameters.";
             return false;
@@ -79,8 +76,7 @@ class Bitfield {
      * */
     void set_piece(std::size_t piece_index) {
         std::scoped_lock<std::mutex> lock {mutex};
-        auto vec_index = piece_index / 8;
-        if (vec_index >= vec.size()) {
+        if (piece_index >= bit_count) {
             BOOST_LOG_TRIVIAL(error)
                 << "Bitfield::set_piece called with invalid parameters.";
             return;
@@ -197,6 +193,8 @@ class Bitfield {
     // It's better to use std::vector<std::uint8_t> instead of std::vector<bool> or boost::dynamic_bitset
     // Because we can move incoming bitfields this way instead of copying them.
     std::vector<std::uint8_t> vec;
+    std::size_t bit_count;
+
     std::mutex mutex;
 
     std::mutex piece_cv_mutex;
