@@ -4,6 +4,7 @@
 #include <boost/asio/ssl/verify_mode.hpp>
 #include <boost/bind/bind.hpp>
 #include <boost/log/trivial.hpp>
+#include <exception>
 #include <memory>
 #include <stdexcept>
 #include <thread>
@@ -13,25 +14,24 @@
 
 namespace asio = boost::asio;
 
-int main(const int argc, const char* argv[]) {
+int main(const int, const char* argv[]) {
     auto start = std::chrono::steady_clock::now(); // Start the timer.
 
     asio::io_context io_context;
     asio::ssl::context ssl_context(asio::ssl::context::tls_client
     ); // Create the ssl context.
     ssl_context.set_default_verify_paths();
-    auto client =
-        std::make_shared<torrent::Client>(io_context, ssl_context, argv[1]);
-    client->start();
+    auto client = std::make_shared<torrent::Client>(io_context, ssl_context);
+    client->start(argv[1]);
     std::vector<std::thread> thread_pool;
 
     for (std::size_t i = 0; i < std::thread::hardware_concurrency(); ++i) {
         thread_pool.emplace_back(std::thread {[&io_context, client]() {
             try {
                 io_context.run();
-            } catch (std::runtime_error error) {
+            } catch (const std::exception& exception) {
                 BOOST_LOG_TRIVIAL(error)
-                    << "Fatal error running the client: " << error.what();
+                    << "Fatal error running the client: " << exception.what();
                 client->stop(); // Stop waiting and close the program.
             }
         }});

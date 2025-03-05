@@ -34,38 +34,42 @@ class Peer: public std::enable_shared_from_this<Peer> {
     };
 
     Peer(
-        PeerManager& peer_manager,
-        asio::io_context& io_context,
-        tcp::endpoint endpoint
+        PeerManager& peer_manager_ref,
+        asio::io_context& io_context_ref,
+        tcp::endpoint peer_endpoint
     ) :
-        peer_manager(peer_manager),
-        io_context(io_context),
-        endpoint(std::move(endpoint)),
-        timer(io_context),
-        socket(io_context) {}
+        io_context(io_context_ref),
+        socket(io_context_ref),
+        endpoint(std::move(peer_endpoint)),
+        peer_manager(peer_manager_ref),
+        timer(io_context_ref) {}
 
     Peer(
-        PeerManager& peer_manager,
-        asio::io_context& io_context,
-        tcp::socket socket
+        PeerManager& peer_manager_ref,
+        asio::io_context& io_context_ref,
+        tcp::socket peer_socket
     ) :
-        peer_manager(peer_manager),
-        io_context(io_context),
-        timer(io_context),
+        io_context(io_context_ref),
+        socket(std::move(peer_socket)),
         endpoint(socket.remote_endpoint()),
-        socket(std::move(socket)) {
+        peer_manager(peer_manager_ref),
+        timer(io_context_ref) {
         change_state(State::Connected);
     }
 
     Peer(Peer&& peer) :
-        peer_manager(peer.peer_manager),
         io_context(peer.io_context),
-        timer(io_context),
         socket(std::move(peer.socket)),
-        endpoint(std::move(peer.endpoint)) {}
+        endpoint(std::move(peer.endpoint)),
+        peer_manager(peer.peer_manager),
+        timer(io_context) {}
 
     Peer(const Peer&) = delete;
     const Peer& operator=(const Peer&) = delete;
+
+    std::shared_ptr<Peer> get_ptr() {
+        return shared_from_this();
+    }
 
     void connect();
 
@@ -76,7 +80,7 @@ class Peer: public std::enable_shared_from_this<Peer> {
                 if (std::isprint(c)) {
                     os << c;
                 } else {
-                    os << "\\x" << std::hex << (int)((std::uint8_t)c);
+                    os << "\\x" << std::hex << static_cast<int>(c);
                 }
             }
             os << std::dec;
@@ -118,11 +122,11 @@ class Peer: public std::enable_shared_from_this<Peer> {
     template<typename... Func>
     void send_message(Message message, Func... func) {
         std::string message_str = message.to_string();
-        auto buffer =
+        auto buffer_ptr =
             std::make_shared<std::vector<std::uint8_t>>(message.into_bytes());
 
         send_message_impl(
-            std::move(buffer),
+            std::move(buffer_ptr),
             std::move(message_str),
             0,
             func...
@@ -131,32 +135,35 @@ class Peer: public std::enable_shared_from_this<Peer> {
 
     template<typename... Func>
     void send_message_impl(
-        std::shared_ptr<std::vector<std::uint8_t>> buffer,
+        std::shared_ptr<std::vector<std::uint8_t>> buffer_ptr,
         std::string message_str,
         std::size_t start,
         Func... func
     ) {
         socket.async_send(
-            asio::buffer(buffer->data() + start, buffer->size() - start),
-            [self = shared_from_this(),
-             buffer,
+            asio::buffer(
+                buffer_ptr->data() + start,
+                buffer_ptr->size() - start
+            ),
+            [self = get_ptr(),
+             buffer_ptr,
              str = std::move(message_str),
              func...](const auto& error, const auto bytes_send) {
                 if (error) {
                     BOOST_LOG_TRIVIAL(error)
                         << "Error while sending a message to " << *self << ": "
                         << error.message();
-                } else if (buffer->size() != bytes_send) {
+                } else if (buffer_ptr->size() != bytes_send) {
                     // Message is not sent fully.
                     // Send the remaining part of the message.
                     self->send_message_impl(
-                        std::move(buffer),
+                        std::move(buffer_ptr),
                         std::move(str),
                         bytes_send,
                         func...
                     );
                 } else {
-                    // Sent the message.
+                // Sent the message.
 #ifndef NDEBUG
                     BOOST_LOG_TRIVIAL(debug)
                         << "Sent " << str << " to " << *self;

@@ -60,7 +60,7 @@ void BencodeParser::Element::element_to_json(
             },
             [&](const List& list) {
                 stream << '[';
-                for (int i = 0; i < list.size(); ++i) {
+                for (std::size_t i = 0; i < list.size(); ++i) {
                     element_to_json(list[i], stream);
                     if (i != list.size() - 1) {
                         stream << ", ";
@@ -130,7 +130,7 @@ void BencodeParser::parse() {
         while (std::isspace(next_char)) {
             next_char = stream->get();
         }
-        element = parse_next(next_char);
+        element = parse_next(static_cast<char>(next_char));
         stream = nullptr; // Close the stream.
     }
 }
@@ -149,14 +149,14 @@ BencodeParser::Element BencodeParser::parse_next(char next_char) {
         default:
             throw std::runtime_error {
                 "Could not parse, invalid input."
-                + std::to_string((int)next_char)
+                + std::to_string(static_cast<int>(next_char))
             };
     }
 }
 
 BencodeParser::Element BencodeParser::parse_int() {
     stream->get();
-    Integer value;
+    Integer value = 0;
     *stream >> value;
     if (stream->get() != 'e') {
         throw std::runtime_error {"Parsing error while parsing an integer."};
@@ -171,7 +171,7 @@ BencodeParser::Element BencodeParser::parse_string() {
         throw std::runtime_error {"Parsing error while parsing a byte string."};
     }
     std::string value;
-    value.resize(length);
+    value.resize(static_cast<std::size_t>(length));
     stream->read(value.data(), length);
     return Element {value};
 }
@@ -179,12 +179,12 @@ BencodeParser::Element BencodeParser::parse_string() {
 BencodeParser::Element BencodeParser::parse_list() {
     stream->get();
     List list;
-    char next_char;
+    int next_char;
     while ((next_char = stream->peek()) != 'e') {
         if (next_char == EOF) {
             throw std::runtime_error {"EOF while parsing."};
         }
-        list.push_back(parse_next(next_char));
+        list.push_back(parse_next(static_cast<char>(next_char)));
     }
     stream->get(); // consume 'e'
 
@@ -194,13 +194,13 @@ BencodeParser::Element BencodeParser::parse_list() {
 BencodeParser::Element BencodeParser::parse_dictionary() {
     stream->get();
     Dictionary dictionary;
-    char next_char;
+    int next_char;
     while ((next_char = stream->peek()) != 'e') {
         if (next_char == EOF) {
             throw std::runtime_error {"EOF while parsing."};
         }
         Element key = parse_string();
-        Element value = parse_next(stream->peek());
+        Element value = parse_next(static_cast<char>(stream->peek()));
 
         dictionary.emplace(std::get<std::string>(key.value), value);
     }

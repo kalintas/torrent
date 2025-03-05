@@ -1,28 +1,30 @@
 #include "pieces.hpp"
 
+#include <boost/log/trivial.hpp>
 #include <chrono>
+#include <exception>
 #include <filesystem>
+#include <fstream>
+#include <ios>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 
 namespace torrent {
 
-std::size_t Pieces::BLOCK_LENGTH = 1 << 14;
+void Pieces::init_file() {
+    // Metadata should be ready before calling this function.
+    assert(metadata->is_ready());
 
-void Pieces::init(
-    std::string file_name,
-    std::size_t file_length,
-    std::size_t p_length,
-    std::string pieces
-) {
-    std::scoped_lock<std::mutex> lock {mutex};
+    // These values are constant through the download.
+    // And they are frequently used so store them in the object.
+    piece_count = metadata->get_piece_count();
+    piece_length = metadata->get_piece_length();
 
-    // Every piece holds 20 bytes in info.pieces
-    // We can get the total piece count just by dividing with 20.
-    piece_count = pieces.size() / 20;
-    bitfield = std::make_unique<Bitfield>((piece_count / 8) + (piece_count % 8 != 0));
-
-    hashes = std::move(pieces);
-    piece_length = p_length;
+    bitfield =
+        std::make_unique<Bitfield>((piece_count / 8) + (piece_count % 8 != 0));
+    const auto& file_name = metadata->get_file_name();
+    const std::size_t file_length = metadata->get_total_length();
 
     bool file_exists = std::filesystem::exists(file_name);
 
@@ -37,52 +39,140 @@ void Pieces::init(
         );
     }
 
-    auto file_size = file.size();
     // file_length is the variable we got from the .torrent file.
     // They could potentially be different. So resize it.
     file.resize(file_length);
-    if (file_size < file_length) {
-        // File was shorter and we extended.
-        // So we need to write zeros at the end of the file.
-        std::vector<char> buffer;
-        buffer.resize(file_length - file_size, 0);
-        file.write_some_at(file_size, asio::buffer(buffer));
-    }
 
     auto file_megabytes = file_length / (1024 * 1024);
     BOOST_LOG_TRIVIAL(info)
         << "Opened the file " << file_name << " (" << file_megabytes << " Mb).";
 
     if (file_exists) {
-        // Run SHA1 checksum if file already exists.
+        // Create a temporary on piece callback.
+        // The reason we are doing this because we don't want to possibly
+        //      extract the torrent before finishing the sha1 checksum.
+        bitfield->set_on_piece_complete([self_weak = get_weak(
+                                         )](std::size_t piece_index) mutable {
+            if (auto self = self_weak.lock()) {
+                self->metadata->on_piece_complete(piece_index);
+            }
+        });
+
         run_sha1_checksum_multithread();
+        // The file is already complete. Just extract the torrent.
+        if (metadata->is_file_complete()) {
+            extract_torrent();
+            stop();
+            return;
+        }
+    }
+
+    // Set the on piece callback.
+    bitfield->set_on_piece_complete([self_weak = get_weak(
+                                     )](std::size_t piece_index) mutable {
+        // Create a weak pointer to avoid cyclic reference.
+        if (auto self = self_weak.lock()) {
+            self->metadata->on_piece_complete(piece_index);
+            if (!self->metadata->is_file_complete()) {
+                return;
+            }
+            // Downloading has finished. Extract the torrent if its necessary.
+            self->extract_torrent();
+            self->stop();
+        }
+    });
+}
+
+void Pieces::extract_file(
+    std::size_t offset,
+    std::size_t length,
+    const std::string& path
+) {
+    std::ofstream output_file(path, std::ios::binary | std::ios::trunc);
+    if (!output_file) {
+        BOOST_LOG_TRIVIAL(error) << "Could not create file: " << path;
+        return;
+    } else {
+        BOOST_LOG_TRIVIAL(info) << "Created file: " << path;
+    }
+    const auto buffer = read_some_at(offset, length);
+    output_file.write(
+        reinterpret_cast<const char*>(buffer.data()),
+        static_cast<std::streamsize>(length)
+    );
+}
+
+void Pieces::extract_torrent() {
+    // File is complete and its time to extract it.
+    namespace fs = std::filesystem;
+
+    const auto& files = metadata->get_files();
+    if (files.size() == 1) {
+        // Torrent is in single file mode.
+        auto [length, path] = files[0];
+        extract_file(0, length, path);
+        return;
+    }
+
+    BOOST_LOG_TRIVIAL(info) << "Started extracting the torrent file.";
+    const std::string folder_path = "./" + metadata->get_name();
+    try {
+        fs::create_directory(folder_path);
+        BOOST_LOG_TRIVIAL(info) << "Created the folder in: " << folder_path;
+    } catch (const std::exception& exception) {
+        BOOST_LOG_TRIVIAL(error)
+            << "Error while creating the folder: " << exception.what();
+        return;
+    }
+
+    std::size_t offset = 0;
+    for (auto [length, path] : files) {
+        extract_file(offset, length, folder_path + path);
+        offset += length;
     }
 }
 
 void Pieces::wait() {
-    if (bitfield == nullptr) {
-        return;
-    }
-    while (running) {
-        bitfield->wait_piece(); // Wait until a piece is downloaded.
-        if (bitfield->get_completed_piece_count() == piece_count) {
-            // File is ready.
-            return;
-        }
-    }
+    std::unique_lock<std::mutex> lock {running_cv_mutex};
+    running_cv.wait(lock, [self = get_ptr()] { return !self->running; });
 }
 
 void Pieces::stop() {
+    std::scoped_lock<std::mutex> lock {running_cv_mutex};
     running = false;
-    bitfield->stop_wait();
+    running_cv.notify_all();
+}
+
+bool Pieces::check_sha1_piece(
+    std::size_t piece_index,
+    const std::string_view piece
+) {
+    unsigned char hash[20];
+    SHA1(
+        reinterpret_cast<const unsigned char*>(piece.data()),
+        piece.size(),
+        hash
+    );
+    const auto& pieces = metadata->get_pieces();
+    int sha1_check = std::memcmp(
+        static_cast<const void*>(&pieces[piece_index * 20]),
+        static_cast<const void*>(hash),
+        20
+    );
+    return sha1_check == 0;
 }
 
 void Pieces::check_pieces_sha1(std::size_t start_piece, std::size_t end_piece) {
-    std::string piece_buffer(piece_length, '\0');
-    auto asio_buffer =
-        asio::mutable_buffer(piece_buffer.data(), piece_buffer.size());
+    std::string piece_buffer;
     for (std::size_t i = start_piece; i < end_piece; i += 1) {
-        file.read_some_at(i * piece_length, asio_buffer);
+        std::size_t length = piece_length;
+        if (i == piece_count - 1) {
+            // Last pieces can be shorter then usual.
+            length = file.size() - i * piece_length;
+        }
+
+        piece_buffer.resize(length);
+        file.read_some_at(i * piece_length, asio::buffer(piece_buffer));
 
         if (check_sha1_piece(i, piece_buffer)) {
             // SHA1 check passed. Add this piece to bitfield.
@@ -130,7 +220,7 @@ void Pieces::run_sha1_checksum_multithread() {
         thread.join();
     }
 
-    if (bitfield->get_completed_piece_count() == piece_count) {
+    if (metadata->is_file_complete()) {
         running = false; // File is already ready.
     }
 
@@ -138,10 +228,9 @@ void Pieces::run_sha1_checksum_multithread() {
     auto elapsed =
         std::chrono::duration_cast<std::chrono::seconds>(end - start);
 
-    BOOST_LOG_TRIVIAL(info)
-        << "Finished SHA1 checksum in " << elapsed.count() << " seconds. Found "
-        << bitfield->get_completed_piece_count() << " valid pieces out of "
-        << piece_count << ".";
+    BOOST_LOG_TRIVIAL(info) << "Finished SHA1 checksum in " << elapsed.count()
+                            << " seconds. Found " << metadata->get_pieces_done()
+                            << " valid pieces out of " << piece_count << ".";
 }
 
 } // namespace torrent

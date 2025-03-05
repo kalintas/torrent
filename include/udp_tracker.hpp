@@ -4,11 +4,10 @@
 #include <boost/endian/conversion.hpp>
 #include <chrono>
 #include <cstdint>
-#include <iostream>
 #include <memory>
 #include <random>
 
-#include "tracker.hpp"
+#include "tracker_manager.hpp"
 
 namespace torrent {
 
@@ -19,20 +18,40 @@ using namespace boost::asio::ip;
  * A BitTorrent tracker abstraction that uses UDP protocol.
  * https://www.bittorrent.org/beps/bep_0015.html
  * */
-class UdpTracker:
-    public Tracker,
-    public std::enable_shared_from_this<UdpTracker> {
+class UdpTracker: public Tracker {
+  private:
+    struct Private {
+        explicit Private() = default;
+    };
+
   public:
-    UdpTracker(Client& client, asio::io_context& io_context) :
-        Tracker(client),
-        resolver(io_context),
-        random_engine(std::random_device {}()),
+    UdpTracker(
+        Private,
+        TrackerManager& tracker_manager_ref,
+        asio::io_context& io_context_ref
+    ) :
+        Tracker(tracker_manager_ref),
         state(State::Disconnected),
-        connection_id_timer(io_context),
-        interval_timer(io_context, std::chrono::steady_clock::now()),
-        socket(io_context) {}
+        connection_id_timer(io_context_ref),
+        interval_timer(io_context_ref, std::chrono::steady_clock::now()),
+        resolver(io_context_ref),
+        socket(io_context_ref),
+        random_engine(std::random_device {}()) {}
 
     ~UdpTracker() {}
+
+    static std::shared_ptr<Tracker>
+    create(TrackerManager& tracker_manager, asio::io_context& io_context) {
+        return std::make_shared<UdpTracker>(
+            Private {},
+            tracker_manager,
+            io_context
+        );
+    }
+
+    std::shared_ptr<UdpTracker> get_ptr() {
+        return std::dynamic_pointer_cast<UdpTracker>(shared_from_this());
+    }
 
     void initiate_connection(boost::url tracker_url) override;
 

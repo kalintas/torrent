@@ -19,6 +19,8 @@
 #include <boost/log/trivial.hpp>
 #include <boost/url.hpp>
 #include <concepts>
+#include <cstddef>
+#include <exception>
 #include <memory>
 #include <variant>
 
@@ -40,21 +42,44 @@ concept StreamTypeConcept = std::same_as<StreamType, tcp::socket>
  * A BitTorrent tracker abstraction that uses HTTP/HTTPS protocol.
  * */
 template<StreamTypeConcept StreamType>
-class BasicHttpTracker:
-    public Tracker,
-    public std::enable_shared_from_this<BasicHttpTracker<StreamType>> {
+class BasicHttpTracker: public Tracker {
+  private:
+    struct Private {
+        explicit Private() = default;
+    };
+
   public:
     BasicHttpTracker(
-        Client& client,
-        asio::io_context& io_context,
-        StreamType&& stream
+        Private,
+        TrackerManager& tracker_manager_ref,
+        asio::io_context& io_context_ref,
+        StreamType&& input_stream
     ) :
-        Tracker(client),
-        resolver(io_context),
-        timer(io_context),
-        stream(std::forward<StreamType>(stream)) {}
+        Tracker(tracker_manager_ref),
+        stream(std::forward<StreamType>(input_stream)),
+        timer(io_context_ref),
+        resolver(io_context_ref) {}
 
     ~BasicHttpTracker() {}
+
+    static std::shared_ptr<Tracker> create(
+        TrackerManager& tracker_manager,
+        asio::io_context& io_context,
+        StreamType&& stream
+    ) {
+        return std::make_shared<BasicHttpTracker<StreamType>>(
+            Private {},
+            tracker_manager,
+            io_context,
+            std::forward<StreamType>(stream)
+        );
+    }
+
+    std::shared_ptr<BasicHttpTracker<StreamType>> get_ptr() {
+        return std::dynamic_pointer_cast<BasicHttpTracker<StreamType>>(
+            shared_from_this()
+        );
+    }
 
     /*
      * This function will initiate a connection with the tracker.
@@ -66,7 +91,7 @@ class BasicHttpTracker:
         resolver.async_resolve(
             url.host(),
             url.port(),
-            [self = this->shared_from_this()](auto error, auto endpoints) {
+            [self = get_ptr()](auto error, auto endpoints) {
                 if (error) {
                     BOOST_LOG_TRIVIAL(error)
                         << *self << " could not resolve the given url: "
@@ -95,8 +120,7 @@ class BasicHttpTracker:
         http::async_write(
             stream,
             request,
-            [self = this->shared_from_this(
-             )](std::error_code error, std::size_t bytes_sent) {
+            [self = get_ptr()](std::error_code error, std::size_t) {
                 if (error) {
                     BOOST_LOG_TRIVIAL(error)
                         << *self << " could not fetch peers" << error.message();
@@ -115,8 +139,7 @@ class BasicHttpTracker:
             stream,
             buffer,
             response,
-            [self = this->shared_from_this(
-             )](std::error_code error, std::size_t bytes_read) {
+            [self = get_ptr()](std::error_code error, std::size_t bytes_read) {
                 if (error) {
                     BOOST_LOG_TRIVIAL(error)
                         << "Error while listening a packet from " << *self
@@ -127,84 +150,93 @@ class BasicHttpTracker:
                 BOOST_LOG_TRIVIAL(info)
                     << "Read a " << bytes_read
                     << " bytes long http response from  the " << *self;
-
-                BencodeParser input_parser(
-                    std::make_unique<std::stringstream>(self->response.body())
-                );
                 try {
-                    input_parser.parse();
-                } catch (const std::runtime_error& error) {
-                    BOOST_LOG_TRIVIAL(error)
-                        << "Could not parse the response from the " << *self
-                        << ": " << error.what();
-                    return self->on_disconnect();
-                }
-
-                auto element = input_parser.get();
-                auto dict = element.get<BencodeParser::Dictionary>();
-                BencodeParser::Dictionary::iterator interval_element,
-                    peers_element;
-
-                if ((interval_element = dict.find("interval")) == dict.end()
-                    || (peers_element = dict.find("peers")) == dict.end()) {
-                    BOOST_LOG_TRIVIAL(error)
-                        << "Received an invalid bencode string from the "
-                        << *self;
-                    return self->on_disconnect();
-                }
-
-                if (!std::holds_alternative<BencodeParser::Integer>(
-                        interval_element->second.value
-                    )
-                    || !std::holds_alternative<BencodeParser::String>(
-                        peers_element->second.value
-                    )) {
-                    BOOST_LOG_TRIVIAL(error)
-                        << "Received an invalid bencode string from the "
-                        << *self;
-                    return self->on_disconnect();
-                }
-
-                // Interval tells us how often we should
-                //      fetch the peer list again from the tracker
-                const std::size_t interval = static_cast<std::size_t>(
-                    interval_element->second.get<BencodeParser::Integer>()
-                );
-                // Add peers
-                auto peer_string = peers_element->second.get<std::string>();
-                std::array<std::uint8_t, 4> ip;
-                for (std::size_t i = 0; i + 6 <= peer_string.size(); i += 6) {
-                    std::copy(
-                        peer_string.begin() + i,
-                        peer_string.begin() + i + 4,
-                        ip.begin()
+                    BencodeParser input_parser(
+                        std::make_unique<std::stringstream>(self->response.body(
+                        ))
                     );
-                    std::uint16_t port =
-                        ((std::uint16_t)peer_string[i + 5] << 8)
-                        | (std::uint16_t)peer_string[i + 4];
-                    // Port is always big endian. So convert it to the native
-                    auto endpoint = tcp::endpoint {
-                        address_v4(ip),
-                        boost::endian::big_to_native(port)
-                    };
+                    input_parser.parse();
 
-                    self->on_new_peer(std::move(endpoint));
-                }
-                BOOST_LOG_TRIVIAL(info)
-                    << "Fetched " << (peer_string.size() / 6) << " peers";
+                    auto element = input_parser.get();
+                    auto dict = element.get<BencodeParser::Dictionary>();
+                    BencodeParser::Dictionary::iterator interval_element,
+                        peers_element;
 
-                self->timer.expires_after(asio::chrono::seconds(interval));
-                self->timer.async_wait([self](auto error) {
-                    if (error) {
+                    if ((interval_element = dict.find("interval")) == dict.end()
+                        || (peers_element = dict.find("peers")) == dict.end()) {
                         BOOST_LOG_TRIVIAL(error)
-                            << *self << " error in async_wait"
-                            << error.message();
-                        return;
+                            << "Received an invalid bencode string from the "
+                            << *self;
+                        return self->on_disconnect();
                     }
-                    // Fetch the peer list again.
-                    self->fetch_peers(); // Request peer list from the tracker.
-                    self->listen_packet(); // Listen response.
-                });
+
+                    if (!std::holds_alternative<BencodeParser::Integer>(
+                            interval_element->second.value
+                        )
+                        || !std::holds_alternative<BencodeParser::String>(
+                            peers_element->second.value
+                        )) {
+                        BOOST_LOG_TRIVIAL(error)
+                            << "Received an invalid bencode string from the "
+                            << *self;
+                        return self->on_disconnect();
+                    }
+
+                    // Interval tells us how often we should
+                    //      fetch the peer list again from the tracker
+                    const std::size_t interval = static_cast<std::size_t>(
+                        interval_element->second.get<BencodeParser::Integer>()
+                    );
+                    // Add peers
+                    auto peer_string =
+                        peers_element->second.get<BencodeParser::String>();
+                    std::array<std::uint8_t, 4> ip;
+                    for (std::size_t i = 0; i + 6 <= peer_string.size();
+                         i += 6) {
+                        std::copy(
+                            peer_string.begin()
+                                + static_cast<std::ptrdiff_t>(i),
+                            peer_string.begin() + static_cast<std::ptrdiff_t>(i)
+                                + 4,
+                            ip.begin()
+                        );
+                        std::uint16_t port =
+                            static_cast<std::uint16_t>(
+                                static_cast<std::uint16_t>(peer_string[i + 5])
+                                << 8
+                            )
+                            | static_cast<std::uint16_t>(peer_string[i + 4]);
+                        // Port is always big endian. So convert it to the native
+                        auto endpoint = tcp::endpoint {
+                            address_v4(ip),
+                            boost::endian::big_to_native(port)
+                        };
+
+                        self->on_new_peer(std::move(endpoint));
+                    }
+                    BOOST_LOG_TRIVIAL(info)
+                        << "Fetched " << (peer_string.size() / 6) << " peers";
+
+                    self->timer.expires_after(asio::chrono::seconds(interval));
+                    self->timer.async_wait([self](auto wait_error) {
+                        if (wait_error) {
+                            BOOST_LOG_TRIVIAL(error)
+                                << *self << " error in async_wait"
+                                << wait_error.message();
+                            return;
+                        }
+                        // Fetch the peer list again.
+                        self->fetch_peers(
+                        ); // Request peer list from the tracker.
+                        self->listen_packet(); // Listen response.
+                    });
+
+                } catch (const std::exception& exception) {
+                    BOOST_LOG_TRIVIAL(error)
+                        << "Error while parsing the message from " << *self
+                        << ": " << exception.what();
+                    return self->on_disconnect();
+                }
             }
         );
     }
@@ -230,7 +262,7 @@ inline void HttpTracker::connect(const tcp::resolver::results_type& endpoints) {
     asio::async_connect(
         stream,
         endpoints,
-        [self = shared_from_this()](auto error, auto result) {
+        [self = get_ptr()](auto error, auto) {
             if (error) {
                 BOOST_LOG_TRIVIAL(error) << "Could not connect to the " << *self
                                          << ": " << error.message();
@@ -249,7 +281,7 @@ inline void HttpsTracker::connect(const tcp::resolver::results_type& endpoints
     asio::async_connect(
         stream.lowest_layer(),
         endpoints,
-        [self = shared_from_this()](auto error, auto result) {
+        [self = get_ptr()](auto error, auto) {
             if (error) {
                 BOOST_LOG_TRIVIAL(error) << "Could not connect to the " << *self
                                          << ": " << error.message();
@@ -259,7 +291,7 @@ inline void HttpsTracker::connect(const tcp::resolver::results_type& endpoints
             // Set SNI Hostname (many hosts need this to handshake successfully)
             if (!SSL_set_tlsext_host_name(
                     self->stream.native_handle(),
-                    self->url.host().c_str()
+                    self->url.host().data()
                 )) {
                 BOOST_LOG_TRIVIAL(error)
                     << "SNI Hostname could not be set: " << ::ERR_get_error();
@@ -269,11 +301,11 @@ inline void HttpsTracker::connect(const tcp::resolver::results_type& endpoints
             // Tracker uses HTTPs protocol. First do the ssl handshake.
             self->stream.async_handshake(
                 asio::ssl::stream_base::client,
-                [self](const auto& error) {
-                    if (error) {
+                [self](const auto& handshake_error) {
+                    if (handshake_error) {
                         BOOST_LOG_TRIVIAL(error)
                             << "Could not ssl handshake with the " << *self
-                            << ": " << error.message();
+                            << ": " << handshake_error.message();
                         return self->on_disconnect();
                     }
                     self->fetch_peers(); // Request peer list from the tracker.

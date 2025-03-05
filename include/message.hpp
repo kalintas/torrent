@@ -32,14 +32,19 @@ class Message {
      * Creates a Message object from given Id and payload.
      * */
     template<typename Iterator>
-    Message(Id id, Iterator it, std::size_t payload_length) : id(id) {
+    Message(Id message_id, Iterator it, std::size_t payload_length) :
+        id(message_id) {
         if (static_cast<std::uint8_t>(id)
             > static_cast<std::uint8_t>(Id::InvalidMessage)) {
             id = Id::InvalidMessage;
         }
 
         payload.resize(payload_length);
-        std::copy(it, it + payload_length, payload.begin());
+        std::copy(
+            it,
+            it + static_cast<Iterator::difference_type>(payload_length),
+            payload.begin()
+        );
     }
 
     /*
@@ -59,9 +64,9 @@ class Message {
      * Creates a Message object from given Id and payload vector. 
      * Moves the given payload.
      * */
-    Message(Id id, std::vector<std::uint8_t> payload) :
-        id(id),
-        payload(std::move(payload)) {
+    Message(Id message_id, std::vector<std::uint8_t> payload_bytes) :
+        id(message_id),
+        payload(std::move(payload_bytes)) {
         if (static_cast<std::uint8_t>(id)
             > static_cast<std::uint8_t>(Id::InvalidMessage)) {
             id = Id::InvalidMessage;
@@ -71,7 +76,7 @@ class Message {
     /*
      * Creates a message with no payload.
      * */
-    Message(Id id) : id(id) {}
+    Message(Id message_id) : id(message_id) {}
 
     Message(Message&& message) :
         id(message.id),
@@ -82,6 +87,10 @@ class Message {
     }
 
     const auto& get_payload() const {
+        return payload;
+    }
+
+    auto& get_payload() {
         return payload;
     }
 

@@ -4,6 +4,7 @@
 #include <boost/log/trivial.hpp>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -21,14 +22,16 @@ using PieceIndex = std::optional<std::size_t>;
 class Bitfield {
   public:
     Bitfield() {}
+
     /*
      * Constructs the Bitfield with the given size parameter.
      * The bitfield object will hold size * 8 bits.
      * */
     Bitfield(std::size_t size) : vec(size, 0) {}
 
-    Bitfield(std::vector<std::uint8_t> bitfield_vec) : vec(std::move(bitfield_vec)) {}
-    
+    Bitfield(std::vector<std::uint8_t> bitfield_vec) :
+        vec(std::move(bitfield_vec)) {}
+
     /*
      * Returns the size of the inner buffer.
      * Bitfield can hold size() * 8 bits.
@@ -36,11 +39,6 @@ class Bitfield {
     std::size_t size() {
         std::scoped_lock<std::mutex> lock {mutex};
         return vec.size();
-    }
-
-    std::size_t get_completed_piece_count() {
-        std::scoped_lock<std::mutex> lock {mutex};
-        return completed_piece_count;
     }
 
     /*
@@ -58,7 +56,6 @@ class Bitfield {
 
     /*
      * Retrieve the bit 
-     * Decreases bitfield.get_completed_piece_count() if it is actually set.
      * */
     bool has_piece(std::size_t piece_index) {
         std::scoped_lock<std::mutex> lock {mutex};
@@ -68,9 +65,6 @@ class Bitfield {
             return false;
         }
         auto result = has_piece_internal(piece_index);
-        if (result) {
-            completed_piece_count -= 1; // Decrease the count of pieces we have.
-        }
         return result;
     }
 
@@ -79,7 +73,7 @@ class Bitfield {
      * Increases bitfield.get_completed_piece_count() if it not already set.
      * */
     void set_piece(std::size_t piece_index) {
-        std::scoped_lock<std::mutex> lock {mutex};
+        std::unique_lock<std::mutex> lock {mutex};
         if (piece_index / 8 >= vec.size()) {
             BOOST_LOG_TRIVIAL(error)
                 << "Bitfield::set_piece called with invalid parameters.";
@@ -91,8 +85,10 @@ class Bitfield {
             return;
         }
 
-        completed_piece_count += 1; // Increase the count of pieces we have.
-        stop_wait();
+        if (on_piece_complete.has_value()) {
+            lock.unlock();
+            on_piece_complete.value()(piece_index);
+        }
         set_piece_internal(piece_index, 1);
     }
 
@@ -124,7 +120,7 @@ class Bitfield {
                     std::uint8_t bit = (value >> (7 - j)) & 1;
                     if (bit != 0) {
                         // Set the piece bit so other peers can't assign the same piece.
-                        vec[i] |= 1 << (7 - j);
+                        vec[i] |= static_cast<std::uint8_t>(1 << (7 - j));
                         // Return the piece index.
                         return {i * 8 + j};
                     }
@@ -140,10 +136,12 @@ class Bitfield {
      * And this piece will not be assignable anymore.
      * */
     void piece_success(PieceIndex piece_index) {
-        std::scoped_lock<std::mutex> lock {mutex};
+        std::unique_lock<std::mutex> lock {mutex};
         if (piece_index.has_value()) {
-            completed_piece_count += 1;
-            stop_wait();
+            if (on_piece_complete.has_value()) {
+                lock.unlock();
+                on_piece_complete.value()(piece_index.value());
+            }
         }
     }
 
@@ -160,21 +158,12 @@ class Bitfield {
     }
 
     /*
-     * Waits until a piece is successfully downloaded.
+     * Set a handler to be called when a new piece gets added.
+     * @param func Function that will be called when a new piece gets downloaded.
+     *      Takes a parameter std::size_t piece_index.
      * */
-    void wait_piece() {
-        std::unique_lock<std::mutex> lock {piece_cv_mutex};
-        cv_should_wake = false;
-        piece_cv.wait(lock, [this] { return cv_should_wake; });
-    }
-
-    /*
-     * Notifies any ongoing wait and wakes them up.
-     * */
-    void stop_wait() {
-        std::scoped_lock<std::mutex> lock {piece_cv_mutex};
-        cv_should_wake = true;
-        piece_cv.notify_all();
+    void set_on_piece_complete(std::function<void(std::size_t)> func) {
+        on_piece_complete = {std::move(func)};
     }
 
   private:
@@ -190,7 +179,8 @@ class Bitfield {
      * @param value Should be either 0 or 1.
      * */
     void set_piece_internal(std::size_t piece_index, std::uint8_t value) {
-        vec[piece_index / 8] |= (value) << (7 - (piece_index % 8));
+        vec[piece_index / 8] |=
+            static_cast<std::uint8_t>((value) << (7 - (piece_index % 8)));
     }
 
   private:
@@ -200,11 +190,7 @@ class Bitfield {
 
     std::mutex mutex;
 
-    std::mutex piece_cv_mutex;
-    std::condition_variable piece_cv;
-    bool cv_should_wake = false;
-
-    std::size_t completed_piece_count = 0;
+    std::optional<std::function<void(std::size_t)>> on_piece_complete;
 };
 } // namespace torrent
 #endif

@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <sstream>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -31,16 +32,16 @@ class BencodeParser {
         using Type = std::variant<Integer, String, List, Dictionary>;
         Type value;
 
-        Element(Element&& element) : value(std::move(element.value)) {}
+        Element(Element&& element) : value(std::forward<Type>(element.value)) {}
 
         Element(const Element& element) : value(element.value) {}
 
         Element() {}
 
-        Element(Type value) : value(std::move(value)) {}
+        Element(Type&& element_value) : value(std::forward<Type>(element_value)) {}
 
         Element& operator=(Element element) {
-            this->value = std::move(element.value);
+            value = std::move(element.value);
             return *this;
         }
 
@@ -82,8 +83,8 @@ class BencodeParser {
     Element element;
 
   public:
-    BencodeParser(std::unique_ptr<std::basic_istream<char>>&& stream) :
-        stream(std::move(stream)) {}
+    BencodeParser(std::unique_ptr<std::basic_istream<char>>&& input_stream) :
+        stream(std::move(input_stream)) {}
 
     BencodeParser(const std::string_view path) {
         stream = std::make_unique<std::ifstream>(

@@ -15,34 +15,60 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
-#include <string>
 
 #include "bitfield.hpp"
+#include "metadata.hpp"
 
 namespace torrent {
 
 namespace asio = boost::asio;
 
 /*
- * A thread safe class that holds and manages pieces. 
- * Each object will associated with a file.
+ * A thread safe class that does IO of pieces. 
  * */
-class Pieces {
+class Pieces: public std::enable_shared_from_this<Pieces> {
+  private:
+    struct Private {
+        explicit Private() = default;
+    };
+
   public:
-    Pieces(asio::io_context& io_context) : file(io_context) {}
+    Pieces(
+        Private,
+        asio::io_context& io_context_ref,
+        std::shared_ptr<Metadata> metadata_ptr
+    ) :
+        file(io_context_ref),
+        metadata(std::move(metadata_ptr)) {}
 
     /*
-     * @param file_name "name" value from the info directory.
-     * @param file_length "length" value from the info directory.
-     * @param p_length "piece length" value from the info directory.
-     * @param pieces "pieces" byte string containing the hashes of the pieces.
+     * Creates a new Pieces object with given metadata. 
      * */
-    void init(
-        std::string file_name,
-        std::size_t file_length,
-        std::size_t p_length,
-        std::string pieces
-    );
+    static std::shared_ptr<Pieces>
+    create(asio::io_context& io_context, std::shared_ptr<Metadata> metadata) {
+        return std::make_shared<Pieces>(
+            Private {},
+            io_context,
+            std::move(metadata)
+        );
+    }
+
+    std::shared_ptr<Pieces> get_ptr() {
+        return shared_from_this();
+    }
+
+    std::weak_ptr<Pieces> get_weak() {
+        return shared_from_this();
+    }
+
+    /*
+     * Fetches the file information from the Metadata.
+     * And constructs the Bitfield with that information.
+     * Opens the output file if it exists and runs a SHA1 checksum over it.
+     * Creates it if it does not.
+     * Metadata should be ready before this function gets called.
+     * */
+    void init_file();
 
     /*
      * Writes given block to the file async.
@@ -55,7 +81,6 @@ class Pieces {
         std::vector<std::uint8_t> payload,
         const auto on_finish
     ) {
-        std::scoped_lock<std::mutex> lock {mutex};
         if (piece_index >= piece_count || begin > piece_length) {
             // Invalid parameter, ignore.
             return;
@@ -76,10 +101,13 @@ class Pieces {
                     on_finish(error_code, false);
                 } else {
                     assert(bytes_transferred == block_size);
-                    // Check if this is the last block.
+                    // The last pieces can be a little bit shorter than usual pieces.
+                    // Check either this is the last block or the last block of the file.
                     // We can do this because our client will always
                     //   request blocks from start to end.
-                    if (begin + block_size >= piece_length) {
+                    if (begin + block_size >= piece_length
+                        || (piece_index * piece_length) + begin + block_size
+                            >= file.size()) {
                         // Run an SHA1 check for this piece.
                         check_sha1_piece_async(piece_index, on_finish);
                     } else {
@@ -102,7 +130,6 @@ class Pieces {
         std::uint32_t length,
         const auto on_finish
     ) {
-        std::scoped_lock<std::mutex> lock {mutex};
         if (piece_index >= piece_count || begin > piece_length) {
             // Invalid parameters, ignore.
             return;
@@ -132,19 +159,14 @@ class Pieces {
         );
     }
 
-    std::size_t get_piece_length() {
-        std::scoped_lock<std::mutex> lock {mutex};
-        return piece_length;
-    }
-
-    std::size_t get_piece_count() {
-        std::scoped_lock<std::mutex> lock {mutex};
-        return piece_count;
-    }
-
-    std::size_t get_block_count() {
-        std::scoped_lock<std::mutex> lock {mutex};
-        return piece_length / BLOCK_LENGTH;
+    /*
+     * Read from the file sync.
+     * */
+    std::vector<std::uint8_t>
+    read_some_at(std::size_t offset, std::size_t length) {
+        std::vector<std::uint8_t> buffer(length, 0);
+        file.read_some_at(offset, asio::buffer(buffer));
+        return buffer;
     }
 
     /*
@@ -158,9 +180,9 @@ class Pieces {
     void stop();
 
   public:
-    static std::size_t BLOCK_LENGTH;
-
   private:
+    /* Private helper functions. */
+
     /*
      * Runs an SHA1 check over the given piece.
      * @param piece_index Index of the parameter piece.
@@ -173,8 +195,8 @@ class Pieces {
         file.async_read_some_at(
             piece_index * piece_length,
             asio::buffer(*buffer_ptr),
-            [=, this](const auto& error_code, std::size_t bytes_transferred) {
-                if (error_code || bytes_transferred != piece_length) {
+            [=, this](const auto& error_code, std::size_t) {
+                if (error_code) {
                     BOOST_LOG_TRIVIAL(error)
                         << "Error while reading from the file: "
                         << error_code.message();
@@ -195,25 +217,7 @@ class Pieces {
      * @return Returns true if piece passed SHA1 check, false if not.
      * */
     bool
-    check_sha1_piece(std::size_t piece_index, const std::string_view piece) {
-        unsigned char hash[20];
-        SHA1(
-            reinterpret_cast<const unsigned char*>(piece.data()),
-            piece.size(),
-            hash
-        );
-        int sha1_check = std::memcmp(
-            static_cast<const void*>(&hashes[piece_index * 20]),
-            static_cast<const void*>(hash),
-            20
-        );
-        return sha1_check == 0;
-    }
-
-    /*
-     * Run a sha1 checksum over the pieces after opening the file.
-     */
-    void run_sha1_checksum_multithread();
+    check_sha1_piece(std::size_t piece_index, const std::string_view piece);
 
     /*
      * Checks sha1 of pieces starting in range of [start_piece, end_piece).
@@ -222,6 +226,23 @@ class Pieces {
      * @param end_piece Ends when index=end_piece.
      * */
     void check_pieces_sha1(std::size_t start_piece, std::size_t end_piece);
+
+    /*
+     * Run a sha1 checksum over the pieces.
+     */
+    void run_sha1_checksum_multithread();
+
+    /*
+     * Creates a new file at the given path.
+     * @param offset Offset in bytes which the function will begin to read.
+     * @param length Length of the desired file.
+     * */
+    void extract_file(
+        std::size_t offset,
+        std::size_t length,
+        const std::string& path
+    );
+    void extract_torrent();
 
   public:
     std::unique_ptr<Bitfield> bitfield;
@@ -233,12 +254,10 @@ class Pieces {
     std::size_t piece_length;
 
     bool running = true;
-    std::mutex cv_mutex;
-    std::condition_variable cv;
+    std::mutex running_cv_mutex;
+    std::condition_variable running_cv;
 
-    std::mutex mutex;
-
-    std::string hashes;
+    std::shared_ptr<Metadata> metadata;
 };
 } // namespace torrent
 

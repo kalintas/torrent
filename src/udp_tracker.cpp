@@ -12,7 +12,7 @@
 #include <optional>
 #include <random>
 
-#include "client.hpp"
+#include "tracker_manager.hpp"
 
 namespace torrent {
 /*
@@ -21,7 +21,7 @@ namespace torrent {
  * */
 class UdpTracker::Packet {
   private:
-    Packet(Action action) : action(action) {
+    Packet(Action packet_action) : action(packet_action) {
         generate_transaction_id();
     }
 
@@ -45,8 +45,10 @@ class UdpTracker::Packet {
         return packet;
     }
 
-    static Packet
-    create_announce_request(const Client& client, std::uint64_t connection_id) {
+    static Packet create_announce_request(
+        const TrackerManager& tracker_manager,
+        std::uint64_t connection_id
+    ) {
         Packet packet {Action::Announce};
         packet.bytes.resize(98);
         packet.write<std::uint64_t>(0, connection_id);
@@ -54,25 +56,39 @@ class UdpTracker::Packet {
         packet.write<std::uint32_t>(12, packet.transaction_id);
         std::memcpy(
             static_cast<void*>(packet.bytes.data() + 16),
-            static_cast<const void*>(client.get_info_hash().data()),
+            static_cast<const void*>(
+                tracker_manager.metadata->get_info_hash().data()
+            ),
             20
         );
         std::memcpy(
             static_cast<void*>(packet.bytes.data() + 36),
-            static_cast<const void*>(client.get_peer_id().data()),
+            static_cast<const void*>(tracker_manager.get_peer_id().data()),
             20
         );
-        packet.write<std::uint64_t>(56, client.get_downloaded()); // downloaded
-        packet.write<std::uint64_t>(64, client.get_left()); // left
-        packet.write<std::uint64_t>(72, client.get_uploaded()); // uploaded
+        packet.write<std::uint64_t>(
+            56,
+            tracker_manager.metadata->get_downloaded()
+        ); // downloaded
+        packet.write<std::uint64_t>(
+            64,
+            tracker_manager.metadata->get_left()
+        ); // left
+        packet.write<std::uint64_t>(
+            72,
+            tracker_manager.metadata->get_uploaded()
+        ); // uploaded
         packet.write<std::uint32_t>(
             80,
             0
         ); // event, 0: none; 1: completed; 2: started; 3: stopped
         packet.write<std::uint32_t>(84, 0); // Ip address, default 0
         packet.write<std::uint32_t>(88, 0); // key
-        packet.write<std::uint32_t>(92, -1); // num_want, default -1
-        packet.write<std::uint16_t>(96, client.get_port());
+        packet.write<std::uint32_t>(
+            92,
+            static_cast<std::uint32_t>(-1)
+        ); // num_want, default -1
+        packet.write<std::uint16_t>(96, tracker_manager.get_port());
         return packet;
     }
 
@@ -218,12 +234,12 @@ void UdpTracker::change_state(State new_state) {
             // Now ask for the connection id.
             send_request(
                 Packet::create_connect_request(),
-                [self = shared_from_this()](Packet response) {
+                [self = get_ptr()](Packet response) {
                     self->connection_id = response.read<std::uint64_t>(8);
                     self->change_state(State::HasConnectionId);
 
                     // From the BEP15:
-                    // A client can use a connection ID until one minute
+                    // A tracker_manager can use a connection ID until one minute
                     // after it has received it. Trackers should accept
                     // the connection ID until two minutes after it has been send.
                     self->connection_id_timer.expires_after(
@@ -236,7 +252,7 @@ void UdpTracker::change_state(State new_state) {
                             return;
                         }
                         // Change the state back to the State::Connected
-                        // This way the client will ask for a connection_id one more time.
+                        // This way the tracker_manager will ask for a connection_id one more time.
                         self->change_state(State::Connected);
                     });
                 }
@@ -249,8 +265,8 @@ void UdpTracker::change_state(State new_state) {
             }
             // We acquired the connection_id, now its time to announce.
             send_request(
-                Packet::create_announce_request(client, connection_id),
-                [self = shared_from_this()](Packet response) {
+                Packet::create_announce_request(tracker_manager, connection_id),
+                [self = get_ptr()](Packet response) {
                     auto interval = response.read<std::uint32_t>(8);
                     for (std::size_t offset = 20;
                          offset < response.length() - 6;
@@ -292,13 +308,13 @@ void UdpTracker::send_request(Packet request, auto on_response) {
     // TODO: Implement time outs
     socket.async_send(
         asio::buffer(request_ptr->get_bytes()),
-        [self = shared_from_this(),
+        [self = get_ptr(),
          request_ptr,
-         on_response](const auto& error, const std::size_t bytes_transferred) {
-            if (error) {
+         on_response](const auto& send_error, const std::size_t) {
+            if (send_error) {
                 BOOST_LOG_TRIVIAL(error)
                     << *self
-                    << " could not send a message: " << error.message();
+                    << " could not send a message: " << send_error.message();
                 return self->change_state(State::Disconnected);
             }
 #ifndef NDEBUG
@@ -307,13 +323,14 @@ void UdpTracker::send_request(Packet request, auto on_response) {
 #endif
             self->socket.async_receive(
                 asio::buffer(self->receive_buffer),
-                [self,
-                 request_ptr,
-                 on_response](const auto& error, const std::size_t bytes_read) {
-                    if (error) {
+                [self, request_ptr, on_response](
+                    const auto& receive_error,
+                    const std::size_t bytes_read
+                ) {
+                    if (receive_error) {
                         BOOST_LOG_TRIVIAL(error)
                             << *self << " could not receive a message: "
-                            << error.message();
+                            << receive_error.message();
                         return self->change_state(State::Disconnected);
                     }
 
@@ -356,7 +373,7 @@ void UdpTracker::initiate_connection(boost::url url) {
     resolver.async_resolve(
         url.host(),
         url.port(),
-        [self = shared_from_this()](const auto& error, auto endpoints) {
+        [self = get_ptr()](const auto& error, auto endpoints) {
             if (error) {
                 BOOST_LOG_TRIVIAL(error)
                     << *self
@@ -366,11 +383,11 @@ void UdpTracker::initiate_connection(boost::url url) {
             asio::async_connect(
                 self->socket,
                 endpoints,
-                [self](const auto& error, const auto& result) {
-                    if (error) {
+                [self](const auto& connect_error, const auto&) {
+                    if (connect_error) {
                         BOOST_LOG_TRIVIAL(error)
                             << "Could not connect to the " << *self << ": "
-                            << error.message();
+                            << connect_error.message();
                         return self->change_state(State::Disconnected);
                     }
                     self->change_state(State::Connected);

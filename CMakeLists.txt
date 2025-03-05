@@ -7,6 +7,7 @@ set(TORRENT_SRC_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 set(
     SRC_FILES 
+    "${TORRENT_SRC_DIR}/metadata.cpp" 
     "${TORRENT_SRC_DIR}/main.cpp" 
     "${TORRENT_SRC_DIR}/bencode_parser.cpp" 
     "${TORRENT_SRC_DIR}/peer.cpp" 
@@ -45,13 +46,7 @@ if (NOT WIN32)
 endif (NOT WIN32)
 
 include(cmake/CompilerWarnings.cmake)
-set_project_warnings(
-  torrent
-  ON
-  ""
-  ""
-  ""
-  "")
+set_project_warnings(torrent FALSE "" "" "" "")
 
 target_include_directories(torrent PRIVATE 
     ${TORRENT_INCLUDE_DIR} 

@@ -19,16 +19,13 @@ namespace torrent {
 void Peer::connect() {
     // Capturing a copy of the shared pointer into the lambda will
     //      effectively make the object alive until the lambda gets dropped.
-    socket.async_connect(
-        endpoint,
-        [self = shared_from_this()](const auto& error) {
-            if (error) {
-                self->change_state(State::Disconnected);
-            } else {
-                self->change_state(State::Connected);
-            }
+    socket.async_connect(endpoint, [self = get_ptr()](const auto& error) {
+        if (error) {
+            self->change_state(State::Disconnected);
+        } else {
+            self->change_state(State::Connected);
         }
-    );
+    });
 }
 
 void Peer::change_state(State new_state) {
@@ -47,13 +44,12 @@ void Peer::change_state(State new_state) {
         case State::Handshook:
             handshook = true;
             peer_manager.on_handshake(*this);
-            // Bitfield should be immiediately after the handshake.
-
+            // Bitfield should be sent immiediately after the handshake.
             send_message(
                 peer_manager.pieces->bitfield->as_message(),
                 [](auto& peer) {
+                    // Send Unchoke after sending the Bitfield.
                     peer->send_message(Message {Message::Id::Unchoke});
-                    peer->send_message(Message {Message::Id::Interested});
                 }
             );
 
@@ -61,6 +57,14 @@ void Peer::change_state(State new_state) {
             listen_peer();
             break;
         case State::Idle:
+            if (!peer_manager.metadata->is_ready()) {
+                // Our metadata of the torrent file is
+                //     still not complete enough to start the download
+                // Fetch the metadata from the peer if they enabled BEP9 extension.
+
+                return;
+            }
+
             // Peer is in idle state.
             // Assign a piece to download.
             if (current_piece_index.has_value()) {
@@ -71,13 +75,17 @@ void Peer::change_state(State new_state) {
             }
 
             if (peer_bitfield == nullptr) {
-                // Peers may not bitfield if they have any piece.
+                // Peers may not have a bitfield if they dont have any piece.
                 // So create an empty bitfield if they didn't already sent one.
                 peer_bitfield = std::make_unique<Bitfield>(
                     peer_manager.pieces->bitfield->size()
                 );
             }
-            assign_piece();
+
+            if (!peer_choking) {
+                // Dont assign a piece if the peer is choking.
+                assign_piece();
+            }
 
             break;
         case State::DownloadingPiece:
@@ -91,8 +99,11 @@ void Peer::assign_piece() {
         peer_manager.pieces->bitfield->assign_piece(*peer_bitfield);
 
     if (current_piece_index.has_value()) {
-        BOOST_LOG_TRIVIAL(info) << "Assigned " << current_piece_index.value()
-                                << "th piece to " << *this;
+#ifndef NDEBUG
+        BOOST_LOG_TRIVIAL(debug) << "Assigned " << current_piece_index.value()
+                                 << "th piece to " << *this;
+#endif
+
         assert(peer_bitfield->has_piece(current_piece_index.value()));
         current_block = 0; // Set current block to 0.
         change_state(State::DownloadingPiece);
@@ -103,7 +114,7 @@ void Peer::assign_piece() {
         // Wait some time before trying again.
         BOOST_LOG_TRIVIAL(error) << "No valid piece for " << *this;
         timer.expires_after(asio::chrono::seconds(10)); // Wait 10 seconds
-        timer.async_wait([self = shared_from_this()](auto error) {
+        timer.async_wait([self = get_ptr()](auto error) {
             if (error) {
                 BOOST_LOG_TRIVIAL(error)
                     << "Error in async_wait: " << error.message();
@@ -123,7 +134,7 @@ void Peer::listen_peer() {
     buffer.resize(4);
     socket.async_receive(
         asio::buffer(buffer),
-        [self = shared_from_this()](const auto& error, const auto bytes_read) {
+        [self = get_ptr()](const auto& error, const auto bytes_read) {
             if (error || bytes_read != self->buffer.size()) {
                 self->change_state(State::Disconnected);
                 return;
@@ -135,7 +146,7 @@ void Peer::listen_peer() {
                 4
             );
             length = boost::endian::big_to_native(length);
-            if (length > MAX_MESSAGE_LENGTH) {
+            if (static_cast<std::size_t>(length) > MAX_MESSAGE_LENGTH) {
                 self->change_state(State::Disconnected);
                 return;
             }
@@ -143,7 +154,7 @@ void Peer::listen_peer() {
                 // Probably a keep alive message. Ignore it.
                 self->listen_peer();
             } else {
-                self->buffer.resize(length);
+                self->buffer.resize(static_cast<std::size_t>(length));
                 // Then listen the actual message.
                 self->read_message_bytes = 0;
                 self->listen_message();
@@ -158,7 +169,7 @@ void Peer::listen_message() {
             buffer.data() + read_message_bytes,
             buffer.size() - read_message_bytes
         ),
-        [self = shared_from_this()](const auto& error, const auto bytes_read) {
+        [self = get_ptr()](const auto& error, const auto bytes_read) {
             if (error) {
                 self->change_state(State::Disconnected);
                 return;
@@ -179,7 +190,7 @@ void Peer::listen_handshake() {
     buffer.resize(peer_manager.get_handshake().size());
     socket.async_receive(
         asio::buffer(buffer),
-        [self = shared_from_this()](const auto& error, const auto bytes_read) {
+        [self = get_ptr()](const auto& error, const auto bytes_read) {
             if (error || bytes_read != self->buffer.size()) {
                 self->change_state(State::Disconnected);
                 return;
@@ -222,7 +233,7 @@ void Peer::start_handshake() {
     // First send the handshake.
     socket.async_send(
         asio::buffer(peer_manager.get_handshake()),
-        [self = shared_from_this()](const auto& error, const auto bytes_send) {
+        [self = get_ptr()](const auto& error, const auto) {
             if (error) {
                 self->change_state(State::Disconnected);
                 return;
@@ -248,6 +259,8 @@ void Peer::on_message(Message message) {
             }
             break;
         case Message::Id::Choke: // unchoke: <len=0001><id=1>
+            // Drop the current index because peer is choking us.
+            current_piece_index = {};
             peer_choking = true;
             break;
         case Message::Id::Interested: // interested: <len=0001><id=2>
@@ -266,6 +279,10 @@ void Peer::on_message(Message message) {
             break;
         }
         case Message::Id::Bitfield: // bitfield: <len=0001+X><id=5><bitfield>
+            if (!peer_manager.metadata->is_ready()) {
+                return;
+            }
+
             if (payload.size() < peer_manager.pieces->bitfield->size()) {
                 // Invalid payload. Ignore the message.
                 break;
@@ -274,6 +291,9 @@ void Peer::on_message(Message message) {
             break;
         case Message::Id::Request: // <len=0013><id=6><index><begin><length>
         {
+            if (!peer_manager.metadata->is_ready()) {
+                return;
+            }
             // Peer is requesting a piece.
             // First check if we have that piece or not.
             const auto index = message.get_int(0);
@@ -289,37 +309,55 @@ void Peer::on_message(Message message) {
                 index,
                 begin,
                 length,
-                [self = shared_from_this()](Message message) {
-                    self->send_message(std::move(message));
+                [self = get_ptr(), length](Message piece_message) {
+                    self->send_message(
+                        std::move(piece_message),
+                        [length](auto& peer) {
+                            // Increase the uploaded counter.
+                            peer->peer_manager.metadata->increase_uploaded(
+                                length
+                            );
+                        }
+                    );
                 }
             );
             break;
         }
         case Message::Id::Piece: // <len=0009+X><id=7><index><begin><block>
         {
+            if (!peer_manager.metadata->is_ready()) {
+                return;
+            }
             if (payload.size() < 8 || !current_piece_index.has_value()) {
                 // Invalid payload. Ignore the message.
                 break;
             }
+            // Increase the downloaded counter.
+            peer_manager.metadata->increase_downloaded(payload.size() - 8);
+
             const auto index = message.get_int(0);
             const auto begin = message.get_int(1);
+            // TODO: change piece_received as current piece offset
             peer_manager.pieces->write_block_async(
                 index,
                 begin,
                 std::move(payload),
-                [self = shared_from_this(
-                 )](const auto& error_code, bool finished) {
+                [self = get_ptr()](const auto& error_code, bool finished) {
                     std::scoped_lock<std::mutex> lock {self->mutex};
+                    if (!self->current_piece_index.has_value()) {
+                        return;
+                    }
+
                     self->piece_received += 1;
                     if (error_code) {
                         self->current_block -= REQUEST_COUNT_PER_CALL;
                     } else if (finished) {
                         // Finished downloading the piece.
-                        auto& pieces = self->peer_manager.pieces;
                         BOOST_LOG_TRIVIAL(info)
                             << "["
-                            << pieces->bitfield->get_completed_piece_count()
-                            << "/" << pieces->get_piece_count()
+                            << self->peer_manager.metadata->get_pieces_done()
+                            << "/"
+                            << self->peer_manager.metadata->get_piece_count()
                             << "]. Finished piece#"
                             << self->current_piece_index.value() << ".";
                         self->peer_manager.pieces->bitfield->piece_success(
@@ -327,7 +365,8 @@ void Peer::on_message(Message message) {
                         );
                         self->change_state(State::Idle);
                     } else if (self->current_block
-                               < self->peer_manager.pieces->get_block_count()) {
+                               < self->peer_manager.metadata->get_block_count(
+                               )) {
                         if (self->piece_received == REQUEST_COUNT_PER_CALL) {
                             self->send_requests(); // Request pieces again.
                         }
@@ -346,12 +385,12 @@ void Peer::on_message(Message message) {
 
 void Peer::send_requests() {
     if (!current_piece_index.has_value()) {
-        // This should never happen but check anyway.
         change_state(State::Idle);
     }
     // Request the piece block by block.
-    const auto piece_length = peer_manager.pieces->get_piece_length();
-    const auto block_count = peer_manager.pieces->get_block_count();
+    const auto piece_length =
+        static_cast<std::uint32_t>(peer_manager.metadata->get_piece_length());
+    const auto block_count = peer_manager.metadata->get_block_count();
     const auto piece_index =
         static_cast<std::uint32_t>(current_piece_index.value());
 
@@ -364,13 +403,29 @@ void Peer::send_requests() {
             std::vector<std::uint8_t>(3 * sizeof(int))
         };
         message.write_int(0, piece_index);
-        const std::uint32_t begin = current_block * Pieces::BLOCK_LENGTH;
+        const std::uint32_t begin =
+            static_cast<std::uint32_t>(current_block * Metadata::BLOCK_LENGTH);
         message.write_int(1, begin);
-        std::uint32_t length = Pieces::BLOCK_LENGTH;
+        std::uint32_t length = Metadata::BLOCK_LENGTH;
         if (current_block == block_count - 1) {
             // Last block, request everything left.
             length = piece_length - begin;
         }
+        if (piece_index == peer_manager.metadata->get_piece_count() - 1) {
+            // The last pieces can be a little bit shorter than usual pieces.
+            // So be careful not to go out of bound when requesting.
+            auto file_size = static_cast<std::uint32_t>(
+                peer_manager.metadata->get_total_length()
+            );
+            auto start = piece_index * piece_length + begin;
+            if (start + length >= file_size) {
+                length = file_size - start;
+                message.write_int(2, length);
+                send_message(std::move(message));
+                break;
+            }
+        }
+
         message.write_int(2, length);
         send_message(std::move(message));
     }

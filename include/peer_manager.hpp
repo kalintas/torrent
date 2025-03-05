@@ -15,12 +15,14 @@ namespace torrent {
 class PeerManager {
   public:
     PeerManager(
-        asio::io_context& io_context,
+        asio::io_context& io_context_ref,
         std::uint16_t port,
-        std::shared_ptr<Pieces> pieces
+        std::shared_ptr<Pieces> pieces_ptr,
+        std::shared_ptr<Metadata> metadata_ptr
     ) :
-        io_context(io_context),
-        pieces(pieces),
+        pieces(std::move(pieces_ptr)),
+        metadata(std::move(metadata_ptr)),
+        io_context(io_context_ref),
         acceptor(io_context, tcp::endpoint(tcp::v4(), port)),
         new_peer_socket(io_context) {}
 
@@ -63,8 +65,17 @@ class PeerManager {
         return active_peers;
     }
 
+    /*
+     * Deletes all peers and drops connections.
+     * */
+    void stop() {
+        std::scoped_lock<std::mutex> lock {mutex};
+        peers.clear();
+    }
+
   public:
     std::shared_ptr<Pieces> pieces;
+    std::shared_ptr<Metadata> metadata;
 
   private:
     asio::io_context& io_context;
