@@ -146,7 +146,7 @@ void Peer::listen_peer() {
                 4
             );
             length = boost::endian::big_to_native(length);
-            if (static_cast<std::size_t>(length) > MAX_MESSAGE_LENGTH) {
+            if (static_cast<std::size_t>(length) > self->peer_manager.config.get_max_message_length()) {
                 self->change_state(State::Disconnected);
                 return;
             }
@@ -300,7 +300,7 @@ void Peer::on_message(Message message) {
             const auto begin = message.get_int(1);
             const auto length = message.get_int(2);
 
-            if (length > MAX_MESSAGE_LENGTH) {
+            if (length > peer_manager.config.get_max_message_length()) {
                 // Close connection when requested a block bigger than 128KB.
                 change_state(State::Disconnected);
                 break;
@@ -350,7 +350,7 @@ void Peer::on_message(Message message) {
 
                     self->piece_received += 1;
                     if (error_code) {
-                        self->current_block -= REQUEST_COUNT_PER_CALL;
+                        self->current_block -= self->peer_manager.config.get_request_per_call();
                     } else if (finished) {
                         // Finished downloading the piece.
                         BOOST_LOG_TRIVIAL(info)
@@ -367,7 +367,7 @@ void Peer::on_message(Message message) {
                     } else if (self->current_block
                                < self->peer_manager.metadata->get_block_count(
                                )) {
-                        if (self->piece_received == REQUEST_COUNT_PER_CALL) {
+                        if (self->piece_received == self->peer_manager.config.get_request_per_call()) {
                             self->send_requests(); // Request pieces again.
                         }
                         return;
@@ -395,7 +395,7 @@ void Peer::send_requests() {
         static_cast<std::uint32_t>(current_piece_index.value());
 
     const auto end_block =
-        std::min(block_count, current_block + REQUEST_COUNT_PER_CALL);
+        std::min(block_count, current_block + peer_manager.config.get_request_per_call());
     piece_received = 0;
     for (; current_block < end_block; ++current_block) {
         auto message = Message {
@@ -404,9 +404,9 @@ void Peer::send_requests() {
         };
         message.write_int(0, piece_index);
         const std::uint32_t begin =
-            static_cast<std::uint32_t>(current_block * Metadata::BLOCK_LENGTH);
+            static_cast<std::uint32_t>(current_block * peer_manager.config.get_block_length());
         message.write_int(1, begin);
-        std::uint32_t length = Metadata::BLOCK_LENGTH;
+        std::uint32_t length = static_cast<std::uint32_t>(peer_manager.config.get_block_length());
         if (current_block == block_count - 1) {
             // Last block, request everything left.
             length = piece_length - begin;

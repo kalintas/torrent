@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "bencode_parser.hpp"
+#include "config.hpp"
 
 namespace torrent {
 
@@ -29,9 +30,7 @@ class Metadata: public std::enable_shared_from_this<Metadata> {
     };
 
   public:
-    Metadata(Private) {}
-
-    static constexpr std::size_t BLOCK_LENGTH = 1 << 14;
+    Metadata(Private, const Config& config_ref) : config(config_ref) {}
 
   public:
     /*
@@ -42,7 +41,7 @@ class Metadata: public std::enable_shared_from_this<Metadata> {
      * @throws std::runtime_exception If an error occurs while parsing the .torrent file.
      * */
     static std::shared_ptr<Metadata>
-    from_torrent_file(const std::string_view path);
+    from_torrent_file(const std::string_view path, const Config& config);
 
     /*
      * Creates a Metadata object from the given magnet link.
@@ -50,7 +49,7 @@ class Metadata: public std::enable_shared_from_this<Metadata> {
      * load_info() must be called after obtaining the info directory from the peers.
      * */
     static std::shared_ptr<Metadata>
-    from_magnet(const boost::url_view magnet_url);
+    from_magnet(const boost::url_view magnet_url, const Config& config);
 
     /*
      * Creates a Metadata object from the given parameter.
@@ -59,7 +58,7 @@ class Metadata: public std::enable_shared_from_this<Metadata> {
      *      magnet link. 
      * @throws std::runtime_exception If an error occurs while parsing the input.
      * */
-    static std::shared_ptr<Metadata> create(const std::string_view torrent);
+    static std::shared_ptr<Metadata> create(const std::string_view torrent, const Config& config);
 
     /*
      * Loads the info directory to this Metadata object.
@@ -206,7 +205,7 @@ class Metadata: public std::enable_shared_from_this<Metadata> {
 
     std::size_t get_block_count() const {
         std::scoped_lock<std::mutex> lock {mutex};
-        return piece_length / BLOCK_LENGTH;
+        return piece_length / config.get_block_length();
     }
 
     bool is_file_complete() const {
@@ -254,6 +253,8 @@ class Metadata: public std::enable_shared_from_this<Metadata> {
     }
 
   private:
+    const Config& config;
+
     mutable std::mutex mutex;
 
     std::string info_hash;

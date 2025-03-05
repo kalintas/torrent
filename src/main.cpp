@@ -6,11 +6,11 @@
 #include <boost/log/trivial.hpp>
 #include <exception>
 #include <memory>
-#include <stdexcept>
 #include <thread>
 #include <vector>
 
 #include "client.hpp"
+#include "config.hpp"
 
 namespace asio = boost::asio;
 
@@ -21,7 +21,11 @@ int main(const int, const char* argv[]) {
     asio::ssl::context ssl_context(asio::ssl::context::tls_client
     ); // Create the ssl context.
     ssl_context.set_default_verify_paths();
-    auto client = std::make_shared<torrent::Client>(io_context, ssl_context);
+
+    torrent::Config config = torrent::ConfigBuilder::default_config()
+    .build();
+
+    auto client = std::make_shared<torrent::Client>(io_context, ssl_context, config);
     client->start(argv[1]);
     std::vector<std::thread> thread_pool;
 

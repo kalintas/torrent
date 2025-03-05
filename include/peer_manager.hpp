@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string_view>
 
+#include "config.hpp"
 #include "peer.hpp"
 #include "pieces.hpp"
 
@@ -16,14 +17,15 @@ class PeerManager {
   public:
     PeerManager(
         asio::io_context& io_context_ref,
-        std::uint16_t port,
+        const Config& config_ref,
         std::shared_ptr<Pieces> pieces_ptr,
         std::shared_ptr<Metadata> metadata_ptr
     ) :
         pieces(std::move(pieces_ptr)),
         metadata(std::move(metadata_ptr)),
+        config(config_ref),
         io_context(io_context_ref),
-        acceptor(io_context, tcp::endpoint(tcp::v4(), port)),
+        acceptor(io_context, tcp::endpoint(tcp::v4(), config_ref.get_port())),
         new_peer_socket(io_context) {}
 
     /*
@@ -76,6 +78,7 @@ class PeerManager {
   public:
     std::shared_ptr<Pieces> pieces;
     std::shared_ptr<Metadata> metadata;
+    const Config& config;
 
   private:
     asio::io_context& io_context;

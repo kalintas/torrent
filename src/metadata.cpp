@@ -14,8 +14,8 @@
 namespace torrent {
 
 std::shared_ptr<Metadata>
-Metadata::from_torrent_file(const std::string_view path) {
-    auto metadata = std::make_shared<Metadata>(Private {});
+Metadata::from_torrent_file(const std::string_view path, const Config& config) {
+    auto metadata = std::make_shared<Metadata>(Private {}, config);
     BencodeParser bencode_parser {path};
     bencode_parser.parse();
     BOOST_LOG_TRIVIAL(info) << "Parsed the .torrent file: " << path;
@@ -121,14 +121,14 @@ void Metadata::load_info(
     }
 }
 
-std::shared_ptr<Metadata> Metadata::from_magnet(const boost::url_view url) {
+std::shared_ptr<Metadata> Metadata::from_magnet(const boost::url_view url, const Config& config) {
     if (url.scheme() != "magnet") {
         throw std::runtime_error(
             "Could not create the metadata, invalid url scheme"
         );
     }
 
-    auto metadata = std::make_shared<Metadata>(Private {});
+    auto metadata = std::make_shared<Metadata>(Private {}, config);
 
     for (const auto& param : url.params()) {
         if (param.key == "xt") { // Exact Topic
@@ -194,12 +194,12 @@ std::shared_ptr<Metadata> Metadata::from_magnet(const boost::url_view url) {
     return metadata;
 }
 
-std::shared_ptr<Metadata> Metadata::create(const std::string_view torrent) {
+std::shared_ptr<Metadata> Metadata::create(const std::string_view torrent, const Config& config) {
     boost::url_view url {torrent};
     if (url.scheme() == "magnet") {
-        return from_magnet(url);
+        return from_magnet(url, config);
     }
-    return from_torrent_file(torrent);
+    return from_torrent_file(torrent, config);
 }
 
 std::string Metadata::get_info_hash(const BencodeParser::Element& info) {

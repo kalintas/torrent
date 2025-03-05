@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "config.hpp"
 #include "metadata.hpp"
 #include "peer_manager.hpp"
 #include "tracker_manager.hpp"
@@ -19,6 +20,10 @@ using tcp = boost::asio::ip::tcp;
 
 class Client {
   private:
+    asio::io_context& io_context;
+    asio::ssl::context& ssl_context;
+    Config config;
+
     std::string peer_id;
     std::shared_ptr<Metadata> metadata;
 
@@ -26,14 +31,11 @@ class Client {
     std::unique_ptr<TrackerManager> tracker_manager;
     std::unique_ptr<PeerManager> peer_manager;
 
-    static constexpr std::uint16_t DEFAULT_PORT = 8000;
-
   public:
     Client(
         asio::io_context& io_context,
         asio::ssl::context& ssl_context,
-        std::uint16_t port = DEFAULT_PORT
-    );
+        Config config = ConfigBuilder::default_config().build());
     // Object must be pinned to its memory address because
     //      Peers contain a reference to it.
     Client(const Client&) = delete;
@@ -75,18 +77,13 @@ class Client {
     const auto& get_metadata() const {
         return metadata;
     }
-
+    
     /*
-     * Returns the port that Client is using to listen incoming peers.
+     * Returns a const reference to the Client configuration. 
      * */
-    std::uint16_t get_port() const {
-        return port;
+    const Config& get_config() const {
+        return config;
     }
-
-  private:
-    asio::io_context& io_context;
-    asio::ssl::context& ssl_context;
-    std::uint16_t port;
 };
 } // namespace torrent
 #endif

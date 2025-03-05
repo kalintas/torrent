@@ -7,6 +7,7 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "config.hpp"
 #include "metadata.hpp"
 #include "tracker.hpp"
 
@@ -18,14 +19,14 @@ class TrackerManager {
     TrackerManager(
         asio::io_context& io_context_ref,
         asio::ssl::context& ssl_context_ref,
-        std::uint16_t listen_port,
+        const Config& config_ref,
         std::string client_peer_id,
         std::shared_ptr<Metadata> metadata_ptr
     ) :
         metadata(std::move(metadata_ptr)),
         io_context(io_context_ref),
         ssl_context(ssl_context_ref),
-        port(listen_port),
+        config(config_ref),
         peer_id(std::move(client_peer_id)) {}
 
     TrackerManager(const TrackerManager&) = delete;
@@ -82,13 +83,13 @@ class TrackerManager {
     }
 
     std::uint16_t get_port() const {
-        return port;
+        return config.get_port();
     }
 
   private:
     asio::io_context& io_context;
     asio::ssl::context& ssl_context;
-    std::uint16_t port;
+    const Config& config;
     std::string peer_id;
     friend class Tracker;
 

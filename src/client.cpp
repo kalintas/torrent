@@ -4,7 +4,6 @@
 
 #include <boost/log/trivial.hpp>
 #include <boost/url/scheme.hpp>
-#include <cstdint>
 #include <memory>
 #include <random>
 #include <sstream>
@@ -15,11 +14,11 @@ namespace torrent {
 Client::Client(
     asio::io_context& io_context_ref,
     asio::ssl::context& ssl_context_ref,
-    std::uint16_t listen_port
+    Config client_config
 ) :
     io_context(io_context_ref),
     ssl_context(ssl_context_ref),
-    port(listen_port) {
+    config(client_config) {
     // Generate 20 random characters for the peer id.
     static constexpr std::string_view alphanum =
         "0123456789"
@@ -50,18 +49,18 @@ Client::Client(
 void Client::start(const std::string_view torrent) {
     try {
         // Create the metadata from the input.
-        metadata = Metadata::create(torrent);
+        metadata = Metadata::create(torrent, config);
 
         // Pieces will manage piece IO for us.
         pieces = Pieces::create(io_context, metadata);
 
         // Create managers.
         peer_manager =
-            std::make_unique<PeerManager>(io_context, port, pieces, metadata);
+            std::make_unique<PeerManager>(io_context, config, pieces, metadata);
         tracker_manager = std::make_unique<TrackerManager>(
             io_context,
             ssl_context,
-            port,
+            config,
             peer_id,
             metadata
         );

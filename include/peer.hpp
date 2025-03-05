@@ -196,10 +196,6 @@ class Peer: public std::enable_shared_from_this<Peer> {
     std::size_t current_block = 0;
     std::size_t piece_received = 0;
 
-    // Constants
-    static constexpr std::size_t REQUEST_COUNT_PER_CALL = 6;
-    static constexpr std::size_t MAX_MESSAGE_LENGTH = 1 << 17;
-
     asio::steady_timer timer;
 
   private:
