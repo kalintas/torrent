@@ -23,6 +23,8 @@ find_package(Boost REQUIRED COMPONENTS url)
 find_package(Boost REQUIRED COMPONENTS asio)
 find_package(Boost REQUIRED COMPONENTS endian)
 find_package(Boost REQUIRED COMPONENTS log)
+find_package(Boost REQUIRED COMPONENTS lockfree)
+find_package(Boost REQUIRED COMPONENTS uuid)
 find_package(OpenSSL REQUIRED)
 
 add_executable(torrent ${SRC_FILES})
@@ -33,6 +35,8 @@ target_link_libraries(torrent PRIVATE Boost::endian)
 target_link_libraries(torrent PRIVATE Boost::log)
 target_link_libraries(torrent PRIVATE OpenSSL::SSL)
 target_link_libraries(torrent PRIVATE OpenSSL::Crypto)
+target_link_libraries(torrent PRIVATE Boost::lockfree)
+target_link_libraries(torrent PRIVATE Boost::uuid)
 
 # open ubsan
 target_compile_options(torrent PRIVATE "-fsanitize=undefined,address")
