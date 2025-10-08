@@ -1,9 +1,11 @@
-## A Torrent Client Written in C++
+## Torrent Client 
 A simple CLI torrent client. Currently supports both torrent files and magnet links. 
 
 Supports UDP and HTTP/HTTPS for trackers and TCP for the peers.
 
-Isn't very efficient at the moment meaning it take a long time to finish the download.
+It is not very efficient at the moment meaning it can take a long time to finish the download.
+
+![Torrent finished screenshot](https://github.com/kalintas/torrent/blob/main/screenshots/debian-iso-finished.png?raw=true)
 
 ### Installing the Torrent Client
 ```
