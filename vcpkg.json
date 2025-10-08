@@ -1,0 +1,14 @@
+{
+  "name": "torrent",
+  "version": "1.0.0",
+  "dependencies": [
+    "boost-asio",
+    "boost-url",
+    "boost-log",
+    "boost-uuid",
+    "boost-dynamic-bitset",
+    "boost-beast",
+    "boost-lockfree",
+    "openssl"
+  ]
+}
