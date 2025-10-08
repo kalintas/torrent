@@ -7,7 +7,6 @@
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/file_base.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/random_access_file.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/uuid/detail/sha1.hpp>
 #include <condition_variable>
@@ -16,6 +15,7 @@
 #include <memory>
 #include <mutex>
 
+#include "async_file.hpp"
 #include "bitfield.hpp"
 #include "metadata.hpp"
 
@@ -227,6 +227,8 @@ class Pieces: public std::enable_shared_from_this<Pieces> {
      * */
     void check_pieces_sha1(std::size_t start_piece, std::size_t end_piece);
 
+    void run_sha1_checksum();
+
     /*
      * Run a sha1 checksum over the pieces.
      */
@@ -248,7 +250,7 @@ class Pieces: public std::enable_shared_from_this<Pieces> {
     std::unique_ptr<Bitfield> bitfield;
 
   private:
-    asio::random_access_file file;
+    AsyncFile file;
 
     std::size_t piece_count;
     std::size_t piece_length;

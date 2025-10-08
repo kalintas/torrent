@@ -165,7 +165,7 @@ BencodeParser::Element BencodeParser::parse_int() {
 }
 
 BencodeParser::Element BencodeParser::parse_string() {
-    Integer length;
+    Integer length = 0;
     *stream >> length;
     if (stream->get() != ':') {
         throw std::runtime_error {"Parsing error while parsing a byte string."};

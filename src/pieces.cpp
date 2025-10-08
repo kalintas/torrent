@@ -31,8 +31,9 @@ void Pieces::init_file() {
     // Create the file if its already not created.
     file.open(
         file_name,
-        asio::file_base::flags::create | asio::file_base::flags::read_write
+        AsyncFileOpenMode::Binary | AsyncFileOpenMode::ReadWrite
     );
+
     if (!file.is_open()) {
         throw std::runtime_error(
             "Error while opening/creating the file " + file_name + "."
@@ -51,12 +52,13 @@ void Pieces::init_file() {
         // Create a temporary on piece callback.
         // The reason we are doing this because we don't want to possibly
         //      extract the torrent before finishing the sha1 checksum.
-        bitfield->set_on_piece_complete([self_weak = get_weak(
-                                         )](std::size_t piece_index) mutable {
-            if (auto self = self_weak.lock()) {
-                self->metadata->on_piece_complete(piece_index);
+        bitfield->set_on_piece_complete(
+            [self_weak = get_weak()](std::size_t piece_index) mutable {
+                if (auto self = self_weak.lock()) {
+                    self->metadata->on_piece_complete(piece_index);
+                }
             }
-        });
+        );
 
         run_sha1_checksum_multithread();
         // The file is already complete. Just extract the torrent.
@@ -68,19 +70,20 @@ void Pieces::init_file() {
     }
 
     // Set the on piece callback.
-    bitfield->set_on_piece_complete([self_weak = get_weak(
-                                     )](std::size_t piece_index) mutable {
-        // Create a weak pointer to avoid cyclic reference.
-        if (auto self = self_weak.lock()) {
-            self->metadata->on_piece_complete(piece_index);
-            if (!self->metadata->is_file_complete()) {
-                return;
+    bitfield->set_on_piece_complete(
+        [self_weak = get_weak()](std::size_t piece_index) mutable {
+            // Create a weak pointer to avoid cyclic reference.
+            if (auto self = self_weak.lock()) {
+                self->metadata->on_piece_complete(piece_index);
+                if (!self->metadata->is_file_complete()) {
+                    return;
+                }
+                // Downloading has finished. Extract the torrent if its necessary.
+                self->extract_torrent();
+                self->stop();
             }
-            // Downloading has finished. Extract the torrent if its necessary.
-            self->extract_torrent();
-            self->stop();
         }
-    });
+    );
 }
 
 void Pieces::extract_file(
@@ -183,6 +186,26 @@ void Pieces::check_pieces_sha1(std::size_t start_piece, std::size_t end_piece) {
                 file.write_some_at(i * piece_length, asio_buffer);
             } */
     }
+}
+
+void Pieces::run_sha1_checksum() {
+    BOOST_LOG_TRIVIAL(info) << "Starting the SHA1 checksum";
+
+    auto start = std::chrono::steady_clock::now();
+
+    check_pieces_sha1(0, piece_count);
+
+    if (metadata->is_file_complete()) {
+        running = false; // File is already ready.
+    }
+
+    auto end = std::chrono::steady_clock::now();
+    auto elapsed =
+        std::chrono::duration_cast<std::chrono::seconds>(end - start);
+
+    BOOST_LOG_TRIVIAL(info) << "Finished SHA1 checksum in " << elapsed.count()
+                            << " seconds. Found " << metadata->get_pieces_done()
+                            << " valid pieces out of " << piece_count << ".";
 }
 
 void Pieces::run_sha1_checksum_multithread() {

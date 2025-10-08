@@ -14,14 +14,19 @@
 
 namespace asio = boost::asio;
 
-int main(const int, const char* argv[]) {
+int main(const int argc, const char* argv[]) {
+    if (argc < 2) {
+        return -1;
+    }
     auto start = std::chrono::steady_clock::now(); // Start the timer.
 
     asio::io_context io_context;
-    asio::ssl::context ssl_context(asio::ssl::context::tls_client
+    asio::ssl::context ssl_context(
+        asio::ssl::context::tls_client
     ); // Create the ssl context.
     ssl_context.set_default_verify_paths();
     auto client = std::make_shared<torrent::Client>(io_context, ssl_context);
+
     client->start(argv[1]);
     std::vector<std::thread> thread_pool;
 
