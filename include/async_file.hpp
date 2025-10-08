@@ -24,7 +24,6 @@ namespace asio = boost::asio;
 #ifdef BOOST_ASIO_HAS_IO_URING
 
 enum class AsyncFileOpenMode : std::uint32_t {
-    Create = asio::file_base::flags::create,
     ReadOnly = asio::file_base::flags::read_only,
     WriteOnly = asio::file_base::flags::write_only,
     ReadWrite = asio::file_base::flags::read_write,
@@ -38,7 +37,11 @@ class AsyncFile {
     AsyncFile(asio::io_context& io_context) : file(io_context) {}
 
     void open(const auto path, const AsyncFileOpenMode open_mode) {
-        file.open(path, static_cast<asio::file_base::flags>(open_mode));
+        file.open(
+            path,
+            static_cast<asio::file_base::flags>(open_mode)
+                | asio::file_base::flags::create
+        );
     }
 
     bool is_open() {
@@ -90,7 +93,7 @@ enum AsyncFileOpenMode : std::ios::openmode {
     WriteOnly = std::ios::out,
     ReadWrite = std::ios::in | std::ios::out,
     Binary = std::ios::binary,
-    Trunc = std::ios::trunc
+    Trunc = std::ios::trunc,
 };
 
 class AsyncFile {

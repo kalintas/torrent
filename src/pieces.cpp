@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+
 #include "async_file.hpp"
 
 namespace torrent {
@@ -32,7 +33,7 @@ void Pieces::init_file() {
     // Create the file if its already not created.
     file.open(
         file_name,
-        AsyncFileOpenMode::Binary | AsyncFileOpenMode::ReadWrite | AsyncFileOpenMode::Create
+        AsyncFileOpenMode::Binary | AsyncFileOpenMode::ReadWrite
     );
 
     if (!file.is_open()) {
