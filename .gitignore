@@ -1,0 +1,7 @@
+# Vcpkg
+vcpkg-manifest-install.log
+vcpkg_installed/
+
+# Build files
+build
+
