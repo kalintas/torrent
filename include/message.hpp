@@ -25,6 +25,7 @@ class Message {
         Request = 6,
         Piece = 7,
         Cancel = 8,
+        Extended = 20, // BEP10 ExtendedProtocol message.
         InvalidMessage,
     };
 
@@ -77,6 +78,12 @@ class Message {
      * Creates a message with no payload.
      * */
     Message(Id message_id) : id(message_id) {}
+    
+    /*
+     * Creates a message with an empty payload in given size. 
+     * @param size Size of the payload in bytes. 
+     * */
+    Message(Id message_id, std::size_t size) : id(message_id), payload(size) {}
 
     Message(Message&& message) :
         id(message.id),
@@ -131,6 +138,10 @@ class Message {
                    << ", begin: " << message.get_int(1)
                    << ", length: " << message.get_int(2);
                 break;
+            case Id::Extended:
+                os << "Extended, extended id: " << static_cast<int>(message.get_int<std::uint8_t>(0)) << " , message: " << 
+                    std::string_view{ reinterpret_cast<const char*>(message.payload.data() + 1), message.payload.size() - 1 };
+                break;
             case Id::InvalidMessage:
                 os << "Invalid, listen port: " << message.get_int(0);
                 break;
@@ -167,28 +178,30 @@ class Message {
     /*
      * Returns the nth integer from the payload.
      * */
-    std::uint32_t get_int(std::size_t int_index) const {
-        if (payload.size() < int_index * 4) {
+    template<typename IntegerType = std::uint32_t> 
+    IntegerType get_int(std::size_t int_index) const {
+        if (payload.size() < int_index * sizeof(IntegerType)) {
             throw std::runtime_error(
                 "Message::get_int called with invalid parameters"
             );
         }
-        std::uint32_t result;
-        std::memcpy(&result, payload.data() + int_index * 4, 4);
+        IntegerType result;
+        std::memcpy(&result, payload.data() + int_index * sizeof(IntegerType), sizeof(IntegerType));
         return boost::endian::big_to_native(result);
     }
 
     /*
      * Writes the parameter int to the payload. Payload must have the required space for it.
      * */
-    void write_int(std::size_t int_index, std::uint32_t value) {
-        if (payload.size() < int_index * 4) {
+    template<typename IntegerType>
+    void write_int(std::size_t int_index, IntegerType value) {
+        if (payload.size() < int_index * sizeof(IntegerType)) {
             throw std::runtime_error(
                 "Message::get_int called with invalid parameters"
             );
         }
         value = boost::endian::native_to_big(value);
-        std::memcpy(payload.data() + int_index * 4, &value, 4);
+        std::memcpy(payload.data() + int_index * sizeof(IntegerType), &value, sizeof(IntegerType));
     }
 
     std::string to_string() const {

@@ -38,7 +38,7 @@ class UdpTracker: public Tracker {
         socket(io_context_ref),
         random_engine(std::random_device {}()) {}
 
-    ~UdpTracker() {}
+    ~UdpTracker() = default;
 
     static std::shared_ptr<Tracker>
     create(TrackerManager& tracker_manager, asio::io_context& io_context) {

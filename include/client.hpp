@@ -4,7 +4,6 @@
 #include <boost/asio.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ssl.hpp>
-#include <cstdint>
 #include <memory>
 
 #include "config.hpp"
@@ -35,7 +34,7 @@ class Client {
     Client(
         asio::io_context& io_context,
         asio::ssl::context& ssl_context,
-        Config config = ConfigBuilder::default_config().build());
+        std::optional<Config> config);
     // Object must be pinned to its memory address because
     //      Peers contain a reference to it.
     Client(const Client&) = delete;

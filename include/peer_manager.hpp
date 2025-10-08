@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "config.hpp"
+#include "extensions.hpp"
 #include "peer.hpp"
 #include "pieces.hpp"
 
@@ -42,7 +43,7 @@ class PeerManager {
      * Calculates the handshake for peer connections later on. 
      * */
     void
-    calculate_handshake(std::string_view info_hash, std::string_view peer_id);
+    calculate_handshake(std::string_view info_hash, std::string_view peer_id, Extensions extensions);
 
     /*
      * Other peers might try to connect with us. Accept them through this function.

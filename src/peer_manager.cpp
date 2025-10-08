@@ -5,14 +5,15 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include "extensions.hpp"
 
-#include "message.hpp"
 
 namespace torrent {
 
 void PeerManager::calculate_handshake(
     std::string_view info_hash,
-    std::string_view peer_id
+    std::string_view peer_id,
+    Extensions extensions 
 ) {
     if (info_hash.size() != 20 || peer_id.size() != 20) {
         throw std::runtime_error(
@@ -22,14 +23,22 @@ void PeerManager::calculate_handshake(
 
     static constexpr std::string_view protocol_identifier =
         "BitTorrent protocol";
-    handshake[0] = 19;
+    handshake[0] = 19; // Length of the protocol identifier.
+    // Write protocol identifier.
     std::memcpy(
         handshake.data() + 1,
         protocol_identifier.data(),
         protocol_identifier.size()
     );
+
     std::memset(handshake.data() + 20, 0, 8); // Reserved bytes. Set all to 0
+
+    // Write 8 bytes reserved bytes.
+    //auto reserved_bytes = extensions.as_reserved_bytes();
+    //std::memcpy(handshake.data() + 20, reserved_bytes.data(), reserved_bytes.size());
+    // Write 20 bytes info hash.
     std::memcpy(handshake.data() + 28, info_hash.data(), info_hash.size());
+    // Write 20 bytes peer id.
     std::memcpy(handshake.data() + 48, peer_id.data(), peer_id.size());
 }
 

@@ -18,7 +18,7 @@ class Tracker: public std::enable_shared_from_this<Tracker> {
     Tracker(const Tracker&) = delete;
     Tracker& operator=(const Tracker&) = delete;
 
-    virtual ~Tracker() {}
+    virtual ~Tracker() = default;
 
     /*
      * Creates a Tracker object. 

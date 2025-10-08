@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <string>
 
 #include "tracker_manager.hpp"
 
@@ -269,13 +270,14 @@ void UdpTracker::change_state(State new_state) {
                 [self = get_ptr()](Packet response) {
                     auto interval = response.read<std::uint32_t>(8);
                     for (std::size_t offset = 20;
-                         offset < response.length() - 6;
-                         ++offset) {
+                         offset <= response.length() - 6;
+                         offset += 6) {
                         auto ip = response.read<std::uint32_t>(offset);
                         auto port = response.read<std::uint16_t>(offset + 4);
-
+                        std::cout << address_v4(ip) << ":" << std::to_string(port) << std::endl;                        
                         self->on_new_peer({address_v4(ip), port});
                     }
+
                     BOOST_LOG_TRIVIAL(info)
                         << "Fetched " << (response.length() - 20) / 6
                         << " peers";

@@ -72,6 +72,7 @@ class TrackerManager {
      * Sets a handler to be called when a new peer endpoint is available. 
      * */
     void set_on_new_peer(std::function<void(tcp::endpoint)> func) {
+        std::scoped_lock<std::mutex> lock {mutex};
         on_new_peer = std::move(func);
     }
 

@@ -7,6 +7,7 @@ set(TORRENT_SRC_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 set(
     SRC_FILES 
+    "${TORRENT_SRC_DIR}/extensions.cpp" 
     "${TORRENT_SRC_DIR}/metadata.cpp" 
     "${TORRENT_SRC_DIR}/main.cpp" 
     "${TORRENT_SRC_DIR}/bencode_parser.cpp" 

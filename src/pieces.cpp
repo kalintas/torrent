@@ -86,8 +86,12 @@ void Pieces::init_file() {
 void Pieces::extract_file(
     std::size_t offset,
     std::size_t length,
-    const std::string& path
+    const std::filesystem::path& path
 ) {
+    try {
+        std::filesystem::create_directories(path.parent_path());
+    } catch (const std::exception&) {
+    }
     std::ofstream output_file(path, std::ios::binary | std::ios::trunc);
     if (!output_file) {
         BOOST_LOG_TRIVIAL(error) << "Could not create file: " << path;
@@ -95,6 +99,8 @@ void Pieces::extract_file(
     } else {
         BOOST_LOG_TRIVIAL(info) << "Created file: " << path;
     }
+    
+
     const auto buffer = read_some_at(offset, length);
     output_file.write(
         reinterpret_cast<const char*>(buffer.data()),
@@ -115,7 +121,7 @@ void Pieces::extract_torrent() {
     }
 
     BOOST_LOG_TRIVIAL(info) << "Started extracting the torrent file.";
-    const std::string folder_path = "./" + metadata->get_name();
+    const std::filesystem::path folder_path{ "./" + metadata->get_name() };
     try {
         fs::create_directory(folder_path);
         BOOST_LOG_TRIVIAL(info) << "Created the folder in: " << folder_path;
@@ -127,7 +133,7 @@ void Pieces::extract_torrent() {
 
     std::size_t offset = 0;
     for (auto [length, path] : files) {
-        extract_file(offset, length, folder_path + path);
+        extract_file(offset, length, folder_path / path);
         offset += length;
     }
 }

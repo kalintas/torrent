@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "bitfield.hpp"
+#include "extensions.hpp"
 #include "message.hpp"
 
 namespace torrent {
@@ -29,6 +30,7 @@ class Peer: public std::enable_shared_from_this<Peer> {
         Disconnected,
         Connected,
         Handshook,
+        DownloadingMetadata,
         Idle,
         DownloadingPiece
     };
@@ -80,7 +82,7 @@ class Peer: public std::enable_shared_from_this<Peer> {
                 if (std::isprint(c)) {
                     os << c;
                 } else {
-                    os << "\\x" << std::hex << static_cast<int>(c);
+                    os << "\\x" << std::hex << static_cast<int>(static_cast<std::uint8_t>(c));
                 }
             }
             os << std::dec;
@@ -178,6 +180,8 @@ class Peer: public std::enable_shared_from_this<Peer> {
     void send_requests();
     void assign_piece();
 
+    bool has_extension(Extension extension) const;
+
   private:
     asio::io_context& io_context;
     tcp::socket socket;
@@ -199,6 +203,9 @@ class Peer: public std::enable_shared_from_this<Peer> {
     asio::steady_timer timer;
 
   private:
+    // Extensions that peer is supporting. 
+    Extensions extensions; 
+
     bool am_choking = true;
     bool am_interested = false;
     bool peer_choking = true;

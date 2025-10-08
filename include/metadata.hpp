@@ -3,6 +3,7 @@
 
 #include <boost/url/urls.hpp>
 #include <condition_variable>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -214,7 +215,15 @@ class Metadata: public std::enable_shared_from_this<Metadata> {
             (total_length / piece_length) + (total_length % piece_length != 0);
         return piece_count == pieces_done;
     }
-
+    
+    /*
+     * Returns the info directory.
+     * */
+    const std::string& get_info_dir() const {
+        std::scoped_lock<std::mutex> lock {mutex};
+        return info_dir; 
+    }
+     
   public:
     /* Additional member functions */
 
@@ -265,7 +274,7 @@ class Metadata: public std::enable_shared_from_this<Metadata> {
         file_name; // Name of the file we will write to while downloading.
     std::size_t piece_length = 0;
     std::size_t total_length = 0;
-    std::vector<std::pair<std::size_t, std::string>> files;
+    std::vector<std::pair<std::size_t, std::filesystem::path>> files;
 
     std::string pieces;
 
@@ -274,6 +283,8 @@ class Metadata: public std::enable_shared_from_this<Metadata> {
     std::size_t left = 0;
 
     std::size_t pieces_done = 0;
+        
+    std::string info_dir;
 };
 
 } // namespace torrent

@@ -4,6 +4,7 @@
 
 #include <boost/log/trivial.hpp>
 #include <boost/url/urls.hpp>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -24,6 +25,7 @@ Metadata::from_torrent_file(const std::string_view path, const Config& config) {
         std::get<BencodeParser::Dictionary>(bencode_parser.get().value);
 
     auto& info = dictionary["info"];
+    metadata->info_dir = info.to_bencode();
     auto info_hash = get_info_hash(info);
 
     // Load the info directory.
@@ -96,10 +98,10 @@ void Metadata::load_info(
             );
             // Extract the file path from the list.
             auto& file_dict = element.get<BencodeParser::Dictionary>();
-            std::string path;
+            std::filesystem::path path;
             for (auto& path_element :
                  file_dict["path"].get<BencodeParser::List>()) {
-                path += '/' + path_element.get<BencodeParser::String>();
+                path.append(path_element.get<BencodeParser::String>());
             }
             // Add a new file.
             files.emplace_back(file_length, std::move(path));

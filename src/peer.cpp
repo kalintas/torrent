@@ -11,6 +11,8 @@
 #include <memory>
 #include <mutex>
 
+#include "bencode_parser.hpp"
+#include "extensions.hpp"
 #include "message.hpp"
 #include "peer_manager.hpp"
 
@@ -28,6 +30,11 @@ void Peer::connect() {
     });
 }
 
+bool Peer::has_extension(Extension extension) const {
+     return extensions.has(extension) && 
+        peer_manager.config.is_supported(extension);
+}
+
 void Peer::change_state(State new_state) {
     state = new_state;
     switch (state) {
@@ -38,12 +45,29 @@ void Peer::change_state(State new_state) {
             start_handshake();
             break;
         case State::Disconnected:
-            peer_manager.pieces->bitfield->piece_failed(current_piece_index);
+            if (peer_manager.pieces->bitfield) {
+                peer_manager.pieces->bitfield->piece_failed(current_piece_index);
+            }
             peer_manager.remove(endpoint); // Remove this peer.
             break;
         case State::Handshook:
             handshook = true;
             peer_manager.on_handshake(*this);
+             
+            if (has_extension(Extension::ExtensionProtocol)) {
+                // Send the Extension Protocol handshake immiediately after peer handshake.
+                auto metadata_size = peer_manager.metadata->get_info_dir().size();
+                send_message(peer_manager.config.get_extensions().as_handshake_message(metadata_size)); 
+                listen_peer();
+                break; 
+            }
+            
+            if (!peer_manager.metadata->is_ready()) {
+                // Peer must wait until the metadata is ready.
+                break;
+            }
+
+            // TODO: Send the bitfield when the metadata is ready.
             // Bitfield should be sent immiediately after the handshake.
             send_message(
                 peer_manager.pieces->bitfield->as_message(),
@@ -56,13 +80,15 @@ void Peer::change_state(State new_state) {
             // Start listening messages from the peer.
             listen_peer();
             break;
+        case State::DownloadingMetadata:
+            break;
         case State::Idle:
             if (!peer_manager.metadata->is_ready()) {
                 // Our metadata of the torrent file is
                 //     still not complete enough to start the download
                 // Fetch the metadata from the peer if they enabled BEP9 extension.
-
-                return;
+                // TODO
+                break;
             }
 
             // Peer is in idle state.
@@ -216,6 +242,8 @@ void Peer::listen_handshake() {
                 return;
             }
 
+            self->extensions = Extensions::from_reserved_bytes(self->buffer.begin() + 20); 
+
             std::string peer_str;
             peer_str.resize(20);
             std::memcpy(
@@ -254,7 +282,7 @@ void Peer::on_message(Message message) {
     switch (message.get_id()) {
         case Message::Id::Unchoke: // choke: <len=0001><id=0>
             peer_choking = false;
-            if (state == State::Handshook) {
+            if (state == State::Handshook && peer_manager.metadata->is_ready()) {
                 change_state(State::Idle);
             }
             break;
@@ -377,6 +405,50 @@ void Peer::on_message(Message message) {
             break;
         }
         case Message::Id::Cancel:
+            break;
+        case Message::Id::Extended:
+            // Extension messages.
+            try {
+                Extension extension = static_cast<Extension>(payload[0]); // Extension type.
+                // Parse the bencode message.
+                std::string bencode(payload.size() - 1, '\0');
+                std::copy(payload.begin() + 1, payload.end(), bencode.begin());
+                BencodeParser bencode_parser{ std::make_unique<std::stringstream>(std::move(bencode)) };
+                bencode_parser.parse();
+
+                auto& dictionary = std::get<BencodeParser::Dictionary>(bencode_parser.get().value);
+                
+                switch (extension) {
+                    case Extension::ExtensionProtocol: 
+                    {
+                        // BEP10 ExtensionProtocol handshake.
+                        auto& m = dictionary.at("m").get<BencodeParser::Dictionary>();
+                        extensions.load_extensions(m);  
+                        
+                        if (has_extension(Extension::MetadaExchange)) {
+                            // Request for the metadata.
+                            std::cout << "SAAAAAAAAAAAAAAAAAA" << std::endl; 
+                        }
+                        break; 
+                    }
+                    case Extension::MetadaExchange:
+                    {
+                        if (peer_manager.metadata->is_ready()) {
+                            // Metadata is already complete.
+                            // No need to parse the rest of the message.
+                        }
+
+                        break;
+                    }
+                    default:
+                        // From BEP10:
+                        // In order to support future extensability, an unrecognized message ID MUST be ignored.
+                        break;
+                }
+
+            } catch (const std::exception& exception) {
+                BOOST_LOG_TRIVIAL(error) << *this <<  ": Error while parsing the Extended message: " << exception.what(); 
+            }
             break;
         case Message::Id::InvalidMessage:
             break;

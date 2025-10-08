@@ -40,8 +40,8 @@ class BencodeParser {
 
         Element(Type&& element_value) : value(std::forward<Type>(element_value)) {}
 
-        Element& operator=(Element element) {
-            value = std::move(element.value);
+        Element& operator=(Element rhs_element) {
+            value = std::move(rhs_element.value);
             return *this;
         }
 
@@ -56,15 +56,15 @@ class BencodeParser {
         }
 
         std::string to_bencode() const {
-            std::stringstream stream;
-            element_to_bencode(*this, stream);
-            return stream.str();
+            std::stringstream sstream;
+            element_to_bencode(*this, sstream);
+            return sstream.str();
         }
 
         std::string to_json() const {
-            std::stringstream stream;
-            element_to_json(*this, stream);
-            return stream.str();
+            std::stringstream sstream;
+            element_to_json(*this, sstream);
+            return sstream.str();
         }
 
       private:
@@ -83,7 +83,7 @@ class BencodeParser {
     Element element;
 
   public:
-    BencodeParser(std::unique_ptr<std::basic_istream<char>>&& input_stream) :
+    BencodeParser(std::unique_ptr<std::basic_istream<char>> input_stream) :
         stream(std::move(input_stream)) {}
 
     BencodeParser(const std::string_view path) {

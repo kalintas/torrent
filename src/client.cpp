@@ -5,6 +5,7 @@
 #include <boost/log/trivial.hpp>
 #include <boost/url/scheme.hpp>
 #include <memory>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -14,11 +15,11 @@ namespace torrent {
 Client::Client(
     asio::io_context& io_context_ref,
     asio::ssl::context& ssl_context_ref,
-    Config client_config
+    std::optional<Config> client_config
 ) :
     io_context(io_context_ref),
     ssl_context(ssl_context_ref),
-    config(client_config) {
+    config(client_config.has_value() ? std::move(client_config.value()) : ConfigBuilder::default_config().build()) {
     // Generate 20 random characters for the peer id.
     static constexpr std::string_view alphanum =
         "0123456789"
@@ -26,7 +27,7 @@ Client::Client(
         "abcdefghijklmnopqrstuvwxyz";
 
     std::default_random_engine random_engine(std::random_device {}());
-    std::uniform_int_distribution<std::size_t> dist(0, alphanum.size());
+    std::uniform_int_distribution<std::size_t> dist(0, alphanum.size() - 1);
     peer_id.reserve(20);
     peer_id += "-KK1000-"; // Optional client identifier.
     while (peer_id.size() < 20) {
@@ -48,6 +49,7 @@ Client::Client(
 
 void Client::start(const std::string_view torrent) {
     try {
+    
         // Create the metadata from the input.
         metadata = Metadata::create(torrent, config);
 
@@ -72,7 +74,8 @@ void Client::start(const std::string_view torrent) {
             pieces->init_file(); // Initialize the file.
             peer_manager->calculate_handshake(
                 metadata->get_info_hash(),
-                peer_id
+                peer_id,
+                config.get_extensions() 
             );
         });
 

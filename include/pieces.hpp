@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 
@@ -240,7 +241,7 @@ class Pieces: public std::enable_shared_from_this<Pieces> {
     void extract_file(
         std::size_t offset,
         std::size_t length,
-        const std::string& path
+        const std::filesystem::path& path
     );
     void extract_torrent();
 

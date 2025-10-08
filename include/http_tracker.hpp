@@ -60,7 +60,7 @@ class BasicHttpTracker: public Tracker {
         timer(io_context_ref),
         resolver(io_context_ref) {}
 
-    ~BasicHttpTracker() {}
+    ~BasicHttpTracker() = default;
 
     static std::shared_ptr<Tracker> create(
         TrackerManager& tracker_manager,
